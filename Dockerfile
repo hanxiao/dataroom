@@ -21,6 +21,16 @@ ENV PI_BIN=pi
 ENV PI_SKIP_VERSION_CHECK=1
 ENV PI_OFFLINE=0
 
+# pi has NO native MCP. The pi-mcp-adapter extension exposes MCP servers (Jina) as a
+# single `mcp` proxy tool. Install it globally + its runtime deps; the orchestrator loads
+# it with --extension. It reads mcp.json from PI_CODING_AGENT_DIR (set per job).
+ARG MCP_ADAPTER_VERSION=2.8.0
+ENV PI_MCP_ADAPTER=/opt/pi-mcp/node_modules/pi-mcp-adapter/index.ts
+RUN mkdir -p /opt/pi-mcp && cd /opt/pi-mcp \
+    && npm init -y >/dev/null 2>&1 \
+    && npm install pi-mcp-adapter@${MCP_ADAPTER_VERSION} \
+    && npm cache clean --force
+
 WORKDIR /app
 
 # Python deps. CUDA torch (cu124 wheels) so the embedder can use the GPU.

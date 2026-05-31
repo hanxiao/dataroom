@@ -6,10 +6,26 @@ Pi `--mode json` emits one JSON object per line. We care about:
   - {"type":"tool_execution_start","toolName":"...", ...}
 Context utilization = latest message total tokens / model context window.
 """
-import json, os
+import json, os, urllib.request
 from pathlib import Path
 
-CONTEXT_WINDOW = int(os.environ.get("CONTEXT_WINDOW", "16384"))
+CONTEXT_WINDOW = int(os.environ.get("CONTEXT_WINDOW", os.environ.get("CTX_SIZE", "131072")))
+LLAMA_URL = os.environ.get("LLAMA_URL", "http://llama-server:8080")
+
+
+def llama_kv() -> dict:
+    """Live KV-cache occupancy from llama.cpp /slots (pi's usage tokens come back 0 from
+    the llama.cpp OpenAI endpoint, so this is the accurate context-utilization source)."""
+    try:
+        with urllib.request.urlopen(f"{LLAMA_URL}/slots", timeout=3) as r:
+            d = json.loads(r.read())
+        s = d[0] if isinstance(d, list) and d else d
+        n_ctx = int(s.get("n_ctx") or CONTEXT_WINDOW)
+        tokens = int(s.get("n_prompt_tokens") or s.get("n_past") or 0)
+        return {"tokens": tokens, "window": n_ctx,
+                "processing": bool(s.get("is_processing"))}
+    except Exception:
+        return {}
 
 
 def _walk_tree(root: Path) -> tuple[dict, int]:
@@ -61,7 +77,14 @@ def parse_pi_log(log_path: Path) -> dict:
                     u = (ev.get("message") or {}).get("usage")
                     if u:
                         last_usage = u
-    ctx_tokens = int(last_usage.get("total", 0)) if last_usage else 0
+    # pi usage tokens (llama.cpp returns these as 0); kept for cost when present.
+    pi_tokens = 0
+    if last_usage:
+        pi_tokens = int(last_usage.get("total") or last_usage.get("totalTokens") or 0)
+    # Prefer live KV occupancy from llama.cpp /slots; fall back to pi usage.
+    kv = llama_kv()
+    window = kv.get("window") or CONTEXT_WINDOW
+    ctx_tokens = kv.get("tokens") or pi_tokens
     return {
         "tool_calls": tool_calls,
         "tool_distribution": dict(sorted(tool_counts.items(),
@@ -70,8 +93,9 @@ def parse_pi_log(log_path: Path) -> dict:
         "usage": last_usage or {},
         "context": {
             "tokens": ctx_tokens,
-            "window": CONTEXT_WINDOW,
-            "percent": round(100 * ctx_tokens / CONTEXT_WINDOW, 1) if CONTEXT_WINDOW else 0,
+            "window": window,
+            "percent": round(100 * ctx_tokens / window, 1) if window else 0,
+            "processing": kv.get("processing", False),
         },
     }
 

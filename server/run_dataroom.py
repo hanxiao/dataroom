@@ -128,8 +128,12 @@ def run_turn(job_dir: Path, agent_dir: Path, prompt: str, timeout: int) -> int:
         pi_bin, "--mode", "json", "--continue",
         "--skill", str(REPO / "pi" / "skills" / "dataroom"),
         "--extension", str(REPO / "pi" / "extensions" / "dataroom-index.ts"),
-        prompt,
     ]
+    # pi has no native MCP; load the adapter so Jina MCP (search_web/read_url) is exposed.
+    mcp_adapter = os.environ.get("PI_MCP_ADAPTER")
+    if mcp_adapter and Path(mcp_adapter).exists():
+        cmd += ["--extension", mcp_adapter]
+    cmd.append(prompt)
     log = open(job_dir / "pi.log", "a")
     log.write(f"\n\n===== TURN @ {time.ctime()} =====\n")
     log.flush()
