@@ -27,6 +27,7 @@ RUN pip3 install --no-cache-dir --break-system-packages \
 COPY server ./server
 COPY pi ./pi
 COPY templates ./templates
+COPY web ./web
 
 # Pre-bake the v5-nano embedder into the image so first job is fast and deploy is reproducible
 ENV CUDA_VISIBLE_DEVICES=""
@@ -37,5 +38,7 @@ SentenceTransformer('jinaai/jina-embeddings-v5-text-nano', device='cpu', trust_r
     || echo "WARN: embed model prefetch skipped (will download on first run)"
 
 ENV JOBS_DIR=/data/jobs
+# Dashboard context bar denominator; keep in sync with llama-server --ctx-size
+ENV CONTEXT_WINDOW=16384
 EXPOSE 8000
 CMD ["python3", "-m", "server.app"]

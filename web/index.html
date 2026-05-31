@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Dataroom-as-a-Service</title>
+<style>
+  :root{--bg:#fff;--fg:#000;--mut:#666;--line:#000}
+  @media (prefers-color-scheme: dark){:root{--bg:#000;--fg:#fff;--mut:#999;--line:#fff}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font-family:"Berkeley Mono",ui-monospace,Menlo,Consolas,monospace;font-size:13px;line-height:1.5}
+  .wrap{max-width:680px;margin:0 auto;padding:48px 24px}
+  h1{font-size:15px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;
+    border-bottom:1px solid var(--line);padding-bottom:12px}
+  p{color:var(--mut)}
+  textarea{width:100%;min-height:90px;background:var(--bg);color:var(--fg);
+    border:1px solid var(--line);padding:10px;font:inherit;resize:vertical}
+  .btn{margin-top:10px;border:1px solid var(--line);background:var(--fg);color:var(--bg);
+    padding:8px 16px;cursor:pointer;font:inherit}
+  .out{margin-top:16px;color:var(--mut)}
+  a{color:inherit}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Dataroom-as-a-Service</h1>
+  <p>Give a query. An autonomous Pi + self-hosted Qwen3.6 harness crawls, researches, and
+     builds a structured dataroom. Async — you get a live dashboard and a zip.</p>
+  <textarea id="q" placeholder="e.g. Competitive landscape of self-hosted small embedding models in 2026"></textarea>
+  <div><button class="btn" id="go">Start research</button></div>
+  <div class="out" id="out"></div>
+</div>
+<script>
+const $=id=>document.getElementById(id);
+$("go").onclick=async()=>{
+  const query=$("q").value.trim();if(!query)return;
+  $("out").textContent="submitting…";
+  const r=await fetch("/jobs",{method:"POST",headers:{"content-type":"application/json"},
+    body:JSON.stringify({query})});
+  const d=await r.json();
+  if(d.job_id){
+    location.href=`/jobs/${d.job_id}/dashboard`;
+  }else{$("out").textContent="error: "+JSON.stringify(d);}
+};
+</script>
+</body>
+</html>

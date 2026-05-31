@@ -10,11 +10,14 @@ GET  /health
 import json, os, subprocess, sys, threading, uuid, time
 from pathlib import Path
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, PlainTextResponse, HTMLResponse
 from pydantic import BaseModel
 import uvicorn
 
+from server.stats import job_stats
+
 HERE = Path(__file__).resolve().parent
+WEB = HERE.parent / "web"
 JOBS = Path(os.environ.get("JOBS_DIR", "/data/jobs")).resolve()
 JOBS.mkdir(parents=True, exist_ok=True)
 
@@ -88,6 +91,35 @@ def result(job_id: str):
         raise HTTPException(409, "not ready")
     return FileResponse(str(zip_path), media_type="application/zip",
                         filename=f"dataroom-{job_id}.zip")
+
+
+@app.get("/jobs/{job_id}/stats")
+def stats_ep(job_id: str):
+    job_dir = JOBS / job_id
+    if not job_dir.exists():
+        raise HTTPException(404, "unknown job")
+    with _lock:
+        meta = dict(_jobs.get(job_id, {}))
+    s = job_stats(job_dir)
+    s["job_id"] = job_id
+    s["job_status"] = meta.get("status", "done" if (job_dir / "dataroom.zip").exists() else "unknown")
+    query = meta.get("query", "")
+    qf = job_dir / "query.txt"
+    if not query and qf.exists():
+        query = qf.read_text(errors="ignore").strip()
+    s["query"] = query
+    return s
+
+
+@app.get("/jobs/{job_id}/dashboard", response_class=HTMLResponse)
+def dashboard(job_id: str):
+    html = (WEB / "dashboard.html").read_text()
+    return HTMLResponse(html.replace("__JOB_ID__", job_id))
+
+
+@app.get("/", response_class=HTMLResponse)
+def index():
+    return HTMLResponse((WEB / "index.html").read_text())
 
 
 @app.get("/jobs/{job_id}/log")

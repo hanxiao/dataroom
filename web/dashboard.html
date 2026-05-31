@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>dataroom · job __JOB_ID__</title>
+<style>
+  :root{
+    --bg:#ffffff; --fg:#000000; --mut:#666; --line:#000; --soft:#e5e5e5; --fill:#000;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#000; --fg:#fff; --mut:#999; --line:#fff; --soft:#222; --fill:#fff; }
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--fg);
+    font-family:"Berkeley Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    font-size:13px;line-height:1.45}
+  a{color:inherit}
+  .wrap{max-width:1100px;margin:0 auto;padding:24px}
+  header{display:flex;justify-content:space-between;align-items:baseline;
+    border-bottom:1px solid var(--line);padding-bottom:12px;margin-bottom:0}
+  h1{font-size:14px;font-weight:600;letter-spacing:.04em;margin:0;text-transform:uppercase}
+  .meta{color:var(--mut);font-size:11px}
+  .dot{display:inline-block;width:7px;height:7px;border:1px solid var(--line);margin-right:6px;
+    vertical-align:middle}
+  .dot.on{background:var(--fill)}
+  .blink{animation:b 1s steps(2) infinite}
+  @keyframes b{50%{opacity:.2}}
+  .query{border-bottom:1px solid var(--line);padding:10px 0;color:var(--mut);font-size:12px}
+  .query b{color:var(--fg)}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:0;border-bottom:1px solid var(--line)}
+  .cell{border-right:1px solid var(--line);border-bottom:1px solid var(--line);
+    padding:14px 16px}
+  .cell:nth-child(2n){border-right:none}
+  .k{color:var(--mut);font-size:10px;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px}
+  .big{font-size:26px;font-weight:600;letter-spacing:-.01em}
+  .sub{color:var(--mut);font-size:11px;margin-top:2px}
+  /* context bar */
+  .bar{height:14px;border:1px solid var(--line);position:relative;margin-top:10px;overflow:hidden}
+  .bar > i{position:absolute;left:0;top:0;bottom:0;background:var(--fill);width:0%}
+  .bar.warn > i{background:repeating-linear-gradient(45deg,var(--fill) 0 4px,transparent 4px 8px)}
+  /* tool distribution */
+  .dist{margin-top:4px}
+  .row{display:flex;align-items:center;gap:8px;margin:3px 0}
+  .row .name{width:150px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .row .track{flex:1;height:10px;border:1px solid var(--line);position:relative}
+  .row .track > i{position:absolute;left:0;top:0;bottom:0;background:var(--fill)}
+  .row .n{width:34px;text-align:right;color:var(--mut)}
+  /* tree */
+  .panel{padding:14px 16px;border-bottom:1px solid var(--line)}
+  pre.tree{margin:0;white-space:pre;overflow:auto;max-height:420px;font-size:12px}
+  .tree .d{font-weight:600}
+  .tree .s{color:var(--mut)}
+  .foot{display:flex;justify-content:space-between;color:var(--mut);font-size:11px;padding-top:12px}
+  .btn{border:1px solid var(--line);background:var(--bg);color:var(--fg);
+    padding:6px 12px;cursor:pointer;font:inherit;text-decoration:none}
+  .btn[disabled]{opacity:.35;cursor:not-allowed}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Dataroom-as-a-Service</h1>
+    <div class="meta">job <b id="jid">__JOB_ID__</b> · <span id="st"><span class="dot blink"></span>connecting</span></div>
+  </header>
+  <div class="query">QUERY&nbsp;&nbsp;<b id="q">—</b></div>
+
+  <div class="grid">
+    <div class="cell">
+      <div class="k">Context utilization</div>
+      <div class="big"><span id="ctxpct">0</span>%</div>
+      <div class="sub"><span id="ctxtok">0</span> / <span id="ctxwin">0</span> tokens</div>
+      <div class="bar" id="ctxbar"><i></i></div>
+    </div>
+    <div class="cell">
+      <div class="k">Tool calls</div>
+      <div class="big" id="toolN">0</div>
+      <div class="sub"><span id="turns">0</span> agent turns · cost $<span id="cost">0.00</span></div>
+    </div>
+    <div class="cell">
+      <div class="k">Dataroom size</div>
+      <div class="big" id="size">0 B</div>
+      <div class="sub"><span id="files">0</span> files</div>
+    </div>
+    <div class="cell">
+      <div class="k">Tool distribution</div>
+      <div class="dist" id="dist"><div class="sub">no calls yet</div></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="k">Dataroom file tree</div>
+    <pre class="tree" id="tree">—</pre>
+  </div>
+
+  <div class="foot">
+    <div>auto-refresh 3s · <span id="ts">—</span></div>
+    <a class="btn" id="dl" href="#" >download dataroom.zip</a>
+  </div>
+</div>
+
+<script>
+const JOB="__JOB_ID__";
+const $=id=>document.getElementById(id);
+
+function human(b){
+  if(b<1024)return b+" B";
+  const u=["KB","MB","GB"];let i=-1;do{b/=1024;i++}while(b>=1024&&i<2);
+  return b.toFixed(b<10?1:0)+" "+u[i];
+}
+function renderTree(node,prefix="",isLast=true,root=true){
+  let out="";
+  if(root){
+    out+=`<span class="d">${node.name}/</span>\n`;
+    const ch=node.children||[];
+    ch.forEach((c,i)=>out+=renderTree(c,"",i===ch.length-1,false));
+    return out;
+  }
+  const branch=isLast?"└─ ":"├─ ";
+  if(node.type==="dir"){
+    out+=`${prefix}${branch}<span class="d">${node.name}/</span>\n`;
+    const ch=node.children||[];
+    const np=prefix+(isLast?"   ":"│  ");
+    ch.forEach((c,i)=>out+=renderTree(c,np,i===ch.length-1,false));
+  }else{
+    out+=`${prefix}${branch}${node.name} <span class="s">(${human(node.size)})</span>\n`;
+  }
+  return out;
+}
+function setStatus(s,done){
+  const el=$("st");
+  if(done){el.innerHTML='<span class="dot on"></span>done';}
+  else if(s==="running"){el.innerHTML='<span class="dot on blink"></span>running';}
+  else if(s==="failed"){el.innerHTML='<span class="dot on"></span>failed';}
+  else{el.innerHTML='<span class="dot"></span>'+(s||"queued");}
+}
+
+async function tick(){
+  try{
+    const r=await fetch(`/jobs/${JOB}/stats`,{cache:"no-store"});
+    if(!r.ok)throw 0;
+    const d=await r.json();
+    $("q").textContent=d.query||"—";
+    const c=d.context||{};
+    $("ctxpct").textContent=c.percent??0;
+    $("ctxtok").textContent=(c.tokens||0).toLocaleString();
+    $("ctxwin").textContent=(c.window||0).toLocaleString();
+    const bar=$("ctxbar");bar.querySelector("i").style.width=Math.min(100,c.percent||0)+"%";
+    bar.classList.toggle("warn",(c.percent||0)>=80);
+    $("toolN").textContent=d.tool_calls||0;
+    $("turns").textContent=d.turns||0;
+    $("cost").textContent=((d.usage&&d.usage.cost)||0).toFixed(4);
+    const dr=d.dataroom||{};
+    $("size").textContent=human(dr.size_bytes||0);
+    $("files").textContent=dr.file_count||0;
+    // distribution
+    const dist=d.tool_distribution||{};const ks=Object.keys(dist);
+    const max=Math.max(1,...Object.values(dist));
+    $("dist").innerHTML=ks.length?ks.map(k=>
+      `<div class="row"><span class="name">${k}</span>
+       <span class="track"><i style="width:${100*dist[k]/max}%"></i></span>
+       <span class="n">${dist[k]}</span></div>`).join(""):'<div class="sub">no calls yet</div>';
+    // tree
+    $("tree").innerHTML=dr.tree?renderTree(dr.tree):"—";
+    setStatus(d.job_status,d.done);
+    const dl=$("dl");
+    if(d.done){dl.removeAttribute("disabled");dl.href=`/jobs/${JOB}/result`;}
+    else{dl.setAttribute("disabled","");dl.href="javascript:void 0";}
+    $("ts").textContent=new Date().toLocaleTimeString();
+  }catch(e){setStatus("unknown",false);}
+}
+tick();setInterval(tick,3000);
+</script>
+</body>
+</html>

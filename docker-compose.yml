@@ -45,6 +45,7 @@ services:
     environment:
       - LLAMA_URL=http://llama-server:8080
       - JOBS_DIR=/data/jobs
+      - CONTEXT_WINDOW=16384       # match llama-server --ctx-size (dashboard context bar)
       - CUDA_VISIBLE_DEVICES=          # embedder stays on CPU; no VRAM contention
       - TOKENIZERS_PARALLELISM=false
     volumes:

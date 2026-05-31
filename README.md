@@ -12,6 +12,8 @@ researching the web, and incrementally building a well-organized **dataroom** on
   - **jina-embeddings-v5-nano** preloaded on CPU for the dataroom index (embed / semantic search / dedup)
   - `read` / `write` / `edit` / `bash` (Pi built-ins) — so it can also write code, verify, and plot
 - **Output**: when done, an async job returns a **`.zip` of the whole dataroom**.
+- **Live dashboard** (turbopuffer-style black/white): real-time context utilization, tool-call
+  count + distribution, dataroom file tree, and dataroom size. At `GET /jobs/{id}/dashboard`.
 
 ## Design philosophy
 
@@ -57,10 +59,13 @@ curl -s -X POST localhost:8000/jobs -H 'content-type: application/json' \
   -d '{"query":"Competitive landscape of self-hosted small embedding models in 2026"}'
 # -> {"job_id":"...."}
 
-# 4. Poll, then download the zip when status=done
-curl -s localhost:8000/jobs/<job_id>
+# 4. Watch the live dashboard (or poll), then download the zip
+open http://<host>:8000/jobs/<job_id>/dashboard
+curl -s localhost:8000/jobs/<job_id>          # raw status
 curl -s -OJ localhost:8000/jobs/<job_id>/result
 ```
+
+There is also a minimal submit page at `GET /` and a JSON stats feed at `GET /jobs/{id}/stats`.
 
 See [`docs/DEPLOY.md`](docs/DEPLOY.md) for the full reproducible walkthrough.
 
