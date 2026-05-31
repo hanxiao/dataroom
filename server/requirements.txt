@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+httpx
+numpy
+pydantic>=2
+sentence-transformers
+peft
+einops
+torch

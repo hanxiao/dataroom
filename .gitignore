@@ -1,0 +1,11 @@
+.env
+models/
+data/
+out/
+.hf/
+__pycache__/
+*.pyc
+.venv/
+node_modules/
+*.zip
+dataroom/.index*
