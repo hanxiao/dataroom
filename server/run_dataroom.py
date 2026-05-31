@@ -1,20 +1,22 @@
 #!/usr/bin/env python3
-"""Orchestrator: runs the autonomous Pi harness loop for one dataroom job.
+"""Orchestrator: runs the autonomous Pi harness for one dataroom job.
 
 - Boots the per-job index sidecar (jina-embeddings-v5-nano) backing `dataroom_index`.
 - Writes per-job Pi config (models.json -> local Qwen). Jina access is the `jina` CLI on PATH.
-- Loops `pi --mode json --continue` (same per-cwd session) so Qwen keeps driving its own
-  loop, using Jina MCP + dataroom_index + bash.
+- Drives ONE persistent `pi --mode rpc` session over stdin/stdout JSONL: send the initial
+  prompt, then after each agent cycle (an `agent_end` event) re-engage with another `prompt`
+  if the work is not done, or `abort` when a ceiling trips. Pi keeps the session,
+  auto-compacts its own context, and runs its internal loop continuously - no per-turn
+  process re-spawn, no `--continue` replay. A "turn" is just one re-nudge (one agent cycle).
 
 Stopping is OUTCOME-FIRST, not budget-first. `DONE` is only honored once a measurable
 coverage floor is met (enough substantive sourced files + a SUMMARY + no open questions);
-a premature DONE is rejected and the loop is nudged to keep going. The loop otherwise runs
-as long as it makes progress, with diminishing-returns early-stop, and hard safety ceilings
-(wall-clock / turns / paid-Jina-calls) so it can never run truly forever. The reason it
-stopped is persisted to run_meta.json and surfaced on the dashboard.
+a premature DONE is rejected and the agent is nudged to keep going. It otherwise runs as
+long as it makes progress, with a diminishing-returns early-stop and hard safety ceilings
+(wall-clock / turns / paid-Jina-calls). The reason it stopped is persisted to run_meta.json.
 
 Most of the intelligence lives in the agent, not here: we expose tools + a one-page skill
-and let Qwen run the harness. This file only supervises the loop and enforces the floor/ceiling.
+and let Qwen run the harness. This file only supervises the floor/ceiling.
 """
 import argparse, json, os, re, subprocess, sys, time, zipfile, signal, socket, threading, urllib.request, urllib.error
 from collections import deque
@@ -35,13 +37,13 @@ def free_port() -> int:
 
 
 def write_pi_config(agent_dir: Path, llama_url: str, jina_key: str, index_url: str):
-    """Per-job, isolated Pi agent dir so default LLM = local Qwen and Jina MCP is wired."""
+    """Per-job, isolated Pi agent dir so default LLM = local Qwen."""
     agent_dir.mkdir(parents=True, exist_ok=True)
     # Context window = the llama-server --ctx-size (default 131072, Qwen3.6 native max).
-    # Pi's built-in auto-compaction (core, fires in --mode json too) triggers at
-    # ctx > window - reserveTokens; keepRecentTokens of recent context survives and older
-    # turns become an LLM summary. We scale reserve/keep with the window so we never
-    # overflow and don't compact prematurely.
+    # Pi's built-in auto-compaction triggers at ctx > window - reserveTokens; keepRecentTokens
+    # of recent context survives and older turns become an LLM summary. We scale reserve/keep
+    # with the window so we never overflow and don't compact prematurely. In rpc mode this all
+    # happens inside the single long-lived session.
     ctx = int(os.environ.get("CONTEXT_WINDOW", os.environ.get("CTX_SIZE", "131072")))
     # Agent-facing model id (must agree between models.json and settings.json below).
     # Free label for llama.cpp's OpenAI endpoint; default qwen3.6 reproduces today exactly.
@@ -70,10 +72,7 @@ def write_pi_config(agent_dir: Path, llama_url: str, jina_key: str, index_url: s
                        "reserveTokens": reserve},
     }, indent=2))
     # No Jina MCP: the agent uses the `jina` CLI via its bash tool (search/read/rerank/...).
-    # jina-cli reads JINA_API_KEY from the environment, which the pi subprocess inherits, so
-    # nothing to wire here. CLI-only is leaner (no pi-mcp-adapter, no proxy tool) and matches
-    # how the model actually researches (it overwhelmingly prefers the shell). For parallel
-    # fan-out (the one thing the old MCP parallel_* tools did), the skill points it at xargs -P.
+    # jina-cli reads JINA_API_KEY from the environment, which the pi subprocess inherits.
     os.environ["DATAROOM_INDEX_URL"] = index_url   # dataroom_index extension target
 
 
@@ -81,8 +80,6 @@ def boot_index(job_dir: Path, index_port: int) -> subprocess.Popen:
     env = dict(os.environ)
     env["DATAROOM_DIR"] = str(job_dir / "dataroom")
     env["INDEX_PORT"] = str(index_port)
-    # EMBED_DEVICE (default cuda) is inherited from the container env; v5-nano shares
-    # the L4 with the LLM. Set EMBED_DEVICE=cpu to avoid VRAM contention if needed.
     return subprocess.Popen(
         [sys.executable, str(HERE / "index_service.py")],
         env=env, stdout=open(job_dir / "index.log", "a"),
@@ -105,10 +102,7 @@ def wait_http(url: str, timeout: int = 120) -> bool:
 
 
 def status_done(dataroom: Path) -> bool:
-    """True when STATUS.md's first line declares completion.
-
-    Accepts a bare `DONE` (legacy) or the templated `STATUS: DONE` first line, so the
-    early-stop fires regardless of which form the agent writes (see SKILL.md template)."""
+    """True when STATUS.md's first line declares completion (bare DONE or `STATUS: DONE`)."""
     sp = dataroom / "STATUS.md"
     if not sp.exists():
         return False
@@ -133,13 +127,12 @@ def index_count(index_url: str) -> int:
 def count_jina_calls(log_path: Path) -> int:
     """Paid Jina calls so far = `jina` CLI invocations in the agent's bash commands.
 
-    The self-hosted LLM is a sunk cost; Jina search/read/rerank/embed (the `jina` CLI) are
-    billed per call, so counting them bounds spend. A piped command (`jina search | jina
-    rerank`) is two API calls, so we count each `jina ` occurrence, not each bash call."""
+    A piped command (`jina search | jina rerank`) is two API calls, so we count each
+    `jina ` occurrence, not each bash call."""
     n = 0
     if not log_path.exists():
         return n
-    cap = 64 * 1024 * 1024            # bound work; logs are small now that deltas are filtered
+    cap = 64 * 1024 * 1024            # bound work; logs are small (deltas filtered at write)
     size = log_path.stat().st_size
     with open(log_path, "rb") as f:
         if size > cap:
@@ -157,60 +150,6 @@ def count_jina_calls(log_path: Path) -> int:
                 cmd = (args.get("command") or args.get("cmd") or "") if isinstance(args, dict) else ""
                 n += len(re.findall(r"\bjina\s", cmd))
     return n
-
-
-def run_turn(job_dir: Path, agent_dir: Path, prompt: str, timeout: int) -> int:
-    env = dict(os.environ)
-    env["PI_CODING_AGENT_DIR"] = str(agent_dir)  # isolate config per job
-    env["PI_SKIP_VERSION_CHECK"] = "1"
-    pi_bin = os.environ.get("PI_BIN", "pi")
-    cmd = [
-        pi_bin, "--mode", "json", "--continue",
-        "--skill", str(REPO / "pi" / "skills" / "dataroom"),
-        "--extension", str(REPO / "pi" / "extensions" / "dataroom-index.ts"),
-    ]
-    cmd.append(prompt)
-    log = open(job_dir / "pi.log", "a")
-    log.write(f"\n\n===== TURN @ {time.ctime()} =====\n")
-    log.flush()
-    # Stream pi's JSON events and DROP per-token `message_update` deltas. Raw --mode json
-    # re-serializes the entire message (incl. the full thinking block) on every token, which
-    # bloats pi.log to multiple GB in minutes and makes /stats (which parses it) time out.
-    # The structured events we actually use -- agent_start / tool_execution_* / message_end --
-    # are kept. start_new_session so the timeout watchdog can kill the whole pi process group.
-    proc = subprocess.Popen(cmd, cwd=str(job_dir), env=env, stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT, text=True, start_new_session=True)
-    timed_out = {"v": False}
-
-    def _kill():
-        timed_out["v"] = True
-        try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-        except Exception:
-            try:
-                proc.kill()
-            except Exception:
-                pass
-
-    watchdog = threading.Timer(max(1, timeout), _kill)
-    watchdog.start()
-    try:
-        for line in proc.stdout:
-            if '"type":"message_update"' in line:
-                continue
-            log.write(line)
-        proc.wait()
-    finally:
-        watchdog.cancel()
-        try:
-            proc.stdout.close()
-        except Exception:
-            pass
-        log.flush()
-    if timed_out["v"]:
-        log.write("\n[orchestrator] turn timed out\n")
-        return 124
-    return proc.returncode if proc.returncode is not None else 0
 
 
 def zip_dataroom(dataroom: Path, out_zip: Path):
@@ -232,23 +171,23 @@ def write_run_meta(job_dir: Path, **fields):
 FIRST_PROMPT = (
     "Research query: {query}\n\n"
     "Load and follow the `dataroom` skill. You are in autonomous dataroom-building mode. "
-    "Build the dataroom under ./dataroom. Drive your own loop this turn: read state, pick "
-    "the highest-value open question, research with the jina CLI (jina search / jina read; fan "
-    "out many with xargs -P), dedup via dataroom_index before writing, write sourced notes, "
-    "verify with code when it matters, and "
-    "keep STATUS.md/OUTLINE.md current. Do as much as you can before ending the turn."
+    "Build the dataroom under ./dataroom. Read state, pick the highest-value open question, "
+    "research with the jina CLI (jina search / jina read; fan out many with xargs -P), dedup "
+    "via dataroom_index before writing, enrich existing notes (read+edit) rather than only "
+    "adding new ones, verify with code when it matters, and keep STATUS.md/OUTLINE.md current."
 )
 CONT_PROMPT = (
-    "Continue building the dataroom. Read STATUS.md and dataroom_index outline first, then "
-    "advance the next highest-value open question. Dedup before writing. Only write DONE on "
-    "the first line of STATUS.md once the coverage floor is met (>= {min_files} substantive "
-    "sourced files, all open questions closed, reports/SUMMARY.md present)."
+    "Continue building the dataroom. Read STATUS.md and the dataroom_index outline first, then "
+    "advance the next highest-value open question. Dedup before writing; prefer enriching an "
+    "existing note over creating a new one. Only write `STATUS: DONE` on the first line of "
+    "STATUS.md once the coverage floor is met (>= {min_files} substantive sourced files, all "
+    "open questions closed, reports/SUMMARY.md present)."
 )
 STALL_PROMPT = (
-    "The last turn added no new substantive sourced files. Do not repeat the same searches. "
-    "Use expand_query / search_arxiv to open NEW angles on the most under-covered open question "
-    "in STATUS.md, read primary sources, and write at least one new sourced note this turn. "
-    "Then dedup before writing."
+    "The last cycle added no new substantive sourced files. Do not repeat the same searches. "
+    "Open NEW angles (jina search --arxiv, expand the query) on the most under-covered open "
+    "question in STATUS.md, read primary sources, and write or enrich at least one sourced note. "
+    "Dedup before writing."
 )
 CORRECTIVE_PROMPT = (
     "You wrote DONE but the dataroom is NOT comprehensive yet: {substantive_files}/{min_files} "
@@ -256,6 +195,160 @@ CORRECTIVE_PROMPT = (
     "SUMMARY.md present={summary_exists}. Remove DONE from STATUS.md, keep researching the open "
     "questions with new sources, and only write DONE again once the floor is actually met."
 )
+
+
+def drive_rpc(job_dir: Path, agent_dir: Path, args, dataroom: Path,
+              min_files: int, sat_window: int, min_new: int):
+    """Drive one persistent `pi --mode rpc` session. Returns (turns, stop_reason, floor)."""
+    env = dict(os.environ)
+    env["PI_CODING_AGENT_DIR"] = str(agent_dir)
+    env["PI_SKIP_VERSION_CHECK"] = "1"
+    pi_bin = os.environ.get("PI_BIN", "pi")
+    cmd = [
+        pi_bin, "--mode", "rpc",
+        "--skill", str(REPO / "pi" / "skills" / "dataroom"),
+        "--extension", str(REPO / "pi" / "extensions" / "dataroom-index.ts"),
+    ]
+    log = open(job_dir / "pi.log", "a")
+    log.write(f"\n\n===== RPC SESSION @ {time.ctime()} =====\n")
+    log.flush()
+    log_path = job_dir / "pi.log"
+
+    proc = subprocess.Popen(cmd, cwd=str(job_dir), env=env,
+                            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, text=True, bufsize=1,
+                            start_new_session=True)
+    lock = threading.Lock()
+
+    def send(obj):
+        with lock:
+            try:
+                proc.stdin.write(json.dumps(obj) + "\n")
+                proc.stdin.flush()
+            except Exception:
+                pass
+
+    hard = {"reason": None}
+
+    def hard_kill(reason):
+        hard["reason"] = reason
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+
+    # Absolute wall-clock backstop: if the loop ever wedges, this guarantees termination
+    # (kills the process -> stdout EOF -> we break out).
+    global_wd = threading.Timer(args.max_seconds + 30, lambda: hard_kill("ceiling_seconds"))
+    global_wd.start()
+
+    start = time.time()
+    turn = 0
+    stop_reason = "error_pi_exited"
+    recent_deltas = deque(maxlen=sat_window)
+    prev = 0
+    fm = floor_metrics(dataroom)
+    cont = CONT_PROMPT.format(min_files=min_files)
+
+    # Kick off the session. Pipe-buffers until pi finishes initializing, then it runs.
+    send({"type": "prompt", "message": FIRST_PROMPT.format(query=args.query)})
+
+    try:
+        while True:
+            # --- read one agent cycle (until agent_end), dropping per-token deltas ---
+            # Per-cycle watchdog: if a single cycle exceeds turn_timeout, `abort` it (pi then
+            # emits agent_end and we proceed). The global backstop covers a total hang.
+            cycle_wd = threading.Timer(max(1, args.turn_timeout),
+                                       lambda: send({"type": "abort"}))
+            cycle_wd.start()
+            ended = False
+            try:
+                while True:
+                    line = proc.stdout.readline()
+                    if line == "":
+                        break                      # EOF -> pi exited / was killed
+                    if '"type":"message_update"' in line:
+                        continue                   # streaming token delta -> keep log small
+                    log.write(line)
+                    if '"type":"agent_end"' in line:
+                        ended = True
+                        break
+            finally:
+                cycle_wd.cancel()
+
+            if not ended:
+                stop_reason = hard["reason"] or "error_pi_exited"
+                break
+
+            turn += 1
+            log.flush()
+
+            # --- evaluate floor / budget (identical policy to the old per-turn loop) ---
+            elapsed = time.time() - start
+            fm = floor_metrics(dataroom)
+            sub = fm["substantive_files"]
+            recent_deltas.append(sub - prev)
+            prev = sub
+            jina_calls = count_jina_calls(log_path)
+            print(f"[orchestrator] cycle {turn} files={sub}/{min_files} jina={jina_calls}")
+
+            if elapsed > args.max_seconds:
+                stop_reason = "ceiling_seconds"; break
+            if turn >= args.max_turns:
+                stop_reason = "ceiling_turns"; break
+            if jina_calls > args.max_jina_calls:
+                stop_reason = "ceiling_cost"; break
+
+            # H5: DONE only honored once the floor is met; otherwise reject + correct.
+            if status_done(dataroom):
+                if fm["floor_met"]:
+                    stop_reason = "done_floor_met"; break
+                print(f"[orchestrator] DONE rejected, floor unmet: {fm}")
+                send({"type": "prompt", "message": CORRECTIVE_PROMPT.format(
+                    min_files=min_files,
+                    **{k: fm[k] for k in ("substantive_files", "open_questions", "summary_exists")})})
+                continue
+
+            # Diminishing-returns early stop, only once the floor is satisfied.
+            saturated = (len(recent_deltas) == sat_window and
+                         all(d < min_new for d in recent_deltas))
+            if saturated and fm["floor_met"]:
+                stop_reason = "done_saturated"; break
+
+            # Re-engage the idle agent for the next cycle. NB: we use `prompt` (not `follow_up`)
+            # because a follow_up sent to an already-idle rpc session is not delivered as a new
+            # run; `prompt` is valid here since agent_end means the agent is no longer streaming.
+            msg = STALL_PROMPT if (recent_deltas and recent_deltas[-1] <= 0) else cont
+            send({"type": "prompt", "message": msg})
+    except KeyboardInterrupt:
+        stop_reason = "interrupted"
+    finally:
+        global_wd.cancel()
+        send({"type": "abort"})
+        try:
+            proc.stdin.close()
+        except Exception:
+            pass
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            try:
+                proc.wait(timeout=10)
+            except Exception:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except Exception:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+        try:
+            log.flush()
+        except Exception:
+            pass
+
+    return turn, stop_reason, fm
 
 
 def main():
@@ -270,13 +363,10 @@ def main():
     ap.add_argument("--max-jina-calls", type=int, default=int(os.environ.get("MAX_JINA_CALLS", "2000")))
     args = ap.parse_args()
 
-    # L3: a non-positive ceiling would make the loop never run and crash at report time.
     if args.max_turns < 1:
-        print("ERROR: --max-turns must be >= 1", file=sys.stderr)
-        sys.exit(2)
+        print("ERROR: --max-turns must be >= 1", file=sys.stderr); sys.exit(2)
     if args.max_seconds < 1:
-        print("ERROR: --max-seconds must be >= 1", file=sys.stderr)
-        sys.exit(2)
+        print("ERROR: --max-seconds must be >= 1", file=sys.stderr); sys.exit(2)
 
     min_files = int(os.environ.get("MIN_FILES", "100"))
     sat_window = int(os.environ.get("SATURATION_WINDOW", "3"))
@@ -285,8 +375,7 @@ def main():
     llama_url = os.environ.get("LLAMA_URL", "http://localhost:8080")
     jina_key = os.environ.get("JINA_API_KEY", "")
     if not jina_key:
-        print("ERROR: JINA_API_KEY required", file=sys.stderr)
-        sys.exit(2)
+        print("ERROR: JINA_API_KEY required", file=sys.stderr); sys.exit(2)
 
     job_dir = Path(args.out).resolve()
     dataroom = job_dir / "dataroom"
@@ -306,69 +395,15 @@ def main():
         write_run_meta(job_dir, stop_reason="error_index_boot", turns=0, done=False)
         sys.exit(3)
 
-    first = FIRST_PROMPT.format(query=args.query)
-    cont = CONT_PROMPT.format(min_files=min_files)
-    log_path = job_dir / "pi.log"
-
     start = time.time()
-    turn = 0
-    stop_reason = "ceiling_turns"          # default if the for-range exhausts
-    recent_deltas = deque(maxlen=sat_window)
-    prev_substantive = 0
-    fm = floor_metrics(dataroom)
-
+    turn, stop_reason, fm = 0, "error_pi_exited", floor_metrics(dataroom)
     try:
-        for turn in range(1, args.max_turns + 1):
-            elapsed = time.time() - start
-            if elapsed > args.max_seconds:
-                stop_reason = "ceiling_seconds"; break
-            jina_calls = count_jina_calls(log_path)
-            if jina_calls > args.max_jina_calls:
-                stop_reason = "ceiling_cost"; break
-
-            # Choose the nudge: first turn, stall steer, or normal continue.
-            if turn == 1:
-                prompt = first
-            elif recent_deltas and recent_deltas[-1] <= 0:
-                prompt = STALL_PROMPT          # M3/M4: don't re-inject an identical nudge into a stuck loop
-            else:
-                prompt = cont
-
-            print(f"[orchestrator] turn {turn}/{args.max_turns} "
-                  f"(files={prev_substantive}/{min_files}, jina_calls={jina_calls})")
-            # L5: never run a turn past the wall-clock ceiling.
-            remaining = max(1, int(args.max_seconds - (time.time() - start)))
-            rc = run_turn(job_dir, agent_dir, prompt, min(args.turn_timeout, remaining))
-            print(f"[orchestrator] turn {turn} rc={rc}")
-
-            # Progress accounting.
-            fm = floor_metrics(dataroom)
-            sub = fm["substantive_files"]
-            recent_deltas.append(sub - prev_substantive)
-            prev_substantive = sub
-
-            # H5: DONE is only honored when the floor is actually met; otherwise reject + correct.
-            if status_done(dataroom):
-                if fm["floor_met"]:
-                    stop_reason = "done_floor_met"; break
-                print(f"[orchestrator] DONE rejected, floor unmet: {fm}")
-                cont = CORRECTIVE_PROMPT.format(min_files=min_files, **{
-                    k: fm[k] for k in ("substantive_files", "open_questions", "summary_exists")})
-                continue       # keep going; this turn's real delta is already recorded
-            else:
-                cont = CONT_PROMPT.format(min_files=min_files)   # reset any corrective prompt
-
-            # Diminishing-returns early stop, but only once the floor is satisfied.
-            saturated = (len(recent_deltas) == sat_window and
-                         all(d < min_new for d in recent_deltas))
-            if saturated and fm["floor_met"]:
-                stop_reason = "done_saturated"; break
-            # If saturated but floor still unmet, keep going (a STALL_PROMPT was/ will be sent)
-            # up to the ceiling; the dashboard surfaces this as a coverage warning.
+        turn, stop_reason, fm = drive_rpc(job_dir, agent_dir, args, dataroom,
+                                          min_files, sat_window, min_new)
     except KeyboardInterrupt:
         stop_reason = "interrupted"
     finally:
-        # N1: reap the sidecar deterministically (SIGTERM, wait, then SIGKILL).
+        # Reap the index sidecar deterministically (SIGTERM, wait, then SIGKILL).
         try:
             os.killpg(os.getpgid(idx.pid), signal.SIGTERM)
             try:
@@ -383,7 +418,7 @@ def main():
     done = stop_reason in ("done_floor_met", "done_saturated")
     write_run_meta(job_dir, stop_reason=stop_reason, turns=turn, done=done,
                    floor=fm, index_count=index_count(index_url),
-                   jina_calls=count_jina_calls(log_path),
+                   jina_calls=count_jina_calls(job_dir / "pi.log"),
                    elapsed_seconds=round(time.time() - start, 1))
     print(f"[orchestrator] wrote {out_zip} (stop_reason={stop_reason})")
     print(json.dumps({"zip": str(out_zip), "turns": turn, "done": done,
