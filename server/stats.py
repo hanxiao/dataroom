@@ -185,7 +185,27 @@ def _summarize(tool: str, args) -> str:
             op = ia.get("op", "?")
             return f"index {op} {str(ia.get('query') or ia.get('path') or '')[:60]}".strip()
         if tool == "bash":
-            return f"bash {str(a.get('command') or a.get('cmd') or '')[:90]}".strip()
+            # collapse line-continuations/newlines so a multi-line command is one clean row
+            cmd = re.sub(r"\s+", " ", str(a.get("command") or a.get("cmd") or "").replace("\\\n", " ")).strip()
+            jm = re.search(r"\bjina\s+([a-z][a-z\-]*)", cmd)
+            if jm:
+                # surface the jina op, not the `cd && printf <urls>` boilerplate that precedes it
+                head = cmd.split("| xargs")[0] if "| xargs" in cmd else cmd
+                targets = re.findall(r'"([^"]{3,}?)"', head)
+                out = "jina " + jm.group(1)
+                if len(targets) > 1:
+                    out += f" x{len(targets)}"               # batch size
+                pm = re.search(r"-P\s*(\d+)", cmd)
+                if pm:
+                    out += f" (P{pm.group(1)})"              # parallel width
+                first = targets[0] if targets else ""
+                if not first:
+                    u = re.search(r"https?://\S+", cmd)
+                    first = u.group(0) if u else ""
+                if first:
+                    out += " " + first
+                return out[:120]
+            return f"bash {cmd[:90]}".strip()
         if tool in ("read", "write", "edit"):
             return f"{tool} {str(a.get('path') or a.get('file') or '')[:80]}".strip()
     except Exception:
