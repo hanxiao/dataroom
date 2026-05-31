@@ -34,15 +34,20 @@ HTTP POST /jobs {query}                  async job (uuid)
 ## Architecture (containers)
 
 ```
-llama-server (:8080)   GPU   Qwen3.6-35B-A3B UD-Q3_K_XL + MTP draft, ctx 16384  (~17GB VRAM)
-daas        (:8000)    CPU   FastAPI + Pi harness + v5-nano embedding (CUDA hidden)
+llama-server (:8080)   GPU   Qwen3.6-35B-A3B UD-Q3_K_XL + MTP draft, ctx 131072 (q8_0 KV)
+daas        (:8000)    GPU   FastAPI + Pi harness + v5-nano embedding (~0.5GB)
 ```
 
-VRAM budget on L4 (24GB): Q3_K_XL weights ~17GB + KV cache (ctx 16384, parallel 1, flash-attn)
-~4GB. The v5-nano embedder is tiny (~212M params, <1GB VRAM) and runs **on the GPU by
-default** (`EMBED_DEVICE=cuda`) for speed, sharing the L4 — total ~22GB, still under 24GB.
-If you raise the LLM `--ctx-size`/`--parallel` and get tight, set `EMBED_DEVICE=cpu` to move
-the embedder off the GPU (zero VRAM contention, like ki-extractor).
+VRAM budget on L4 (24GB): Q3_K_XL weights ~17GB leave ~6GB for the KV cache. With
+`--flash-attn` + **q8_0 KV quantization** the context window stretches far past the Q4 setups
+(ki-extractor's Q4 weights are ~22GB so it can only do 8K-16K; our Q3 frees room for much
+more). Default `CTX_SIZE=131072` targets Qwen3.6's full native window — **verify with
+`nvidia-smi` on your box and lower `CTX_SIZE` (e.g. 65536) if it OOMs.** The v5-nano embedder
+(~212M params, ~0.5GB) runs on the GPU by default (`EMBED_DEVICE=cuda`); set `EMBED_DEVICE=cpu`
+to move it off-GPU if you need the headroom.
+
+The Pi context window, the dashboard's context-utilization bar, and Pi's built-in
+auto-compaction all key off the same `CTX_SIZE`, so they stay consistent automatically.
 
 ## Reproducible deploy (single L4 GPU)
 

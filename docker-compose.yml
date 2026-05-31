@@ -16,14 +16,19 @@ services:
               capabilities: [gpu]
     restart: unless-stopped
     # Qwen3.6-35B-A3B UD-Q3_K_XL + MTP draft on a single L4 24GB.
-    # ctx 16384 / parallel 1 / flash-attn keeps weights(~17GB)+KV(~4GB) under 24GB (no OOM).
+    # Q3_K_XL weights (~17GB) leave ~6GB for KV cache. With flash-attn + q8_0 KV
+    # quantization, a large context fits. CTX_SIZE is overridable (see .env); the
+    # default targets the model's full 131072 window. If you OOM, lower CTX_SIZE
+    # (e.g. 65536) and re-check nvidia-smi.
     command: >
       --model /models/Qwen3.6-35B-A3B-UD-Q3_K_XL.gguf
       --host 0.0.0.0
       --port 8080
-      --ctx-size 16384
+      --ctx-size ${CTX_SIZE:-131072}
       --parallel 1
       --flash-attn 1
+      --cache-type-k q8_0
+      --cache-type-v q8_0
       --no-mmap
       --threads 8
       --spec-type draft-mtp
@@ -45,7 +50,7 @@ services:
     environment:
       - LLAMA_URL=http://llama-server:8080
       - JOBS_DIR=/data/jobs
-      - CONTEXT_WINDOW=16384       # match llama-server --ctx-size (dashboard context bar)
+      - CONTEXT_WINDOW=${CTX_SIZE:-131072}   # match llama-server --ctx-size (dashboard + compaction)
       - EMBED_DEVICE=cuda          # v5-nano on GPU (~0.5GB) for speed; set cpu to avoid VRAM use
       - TOKENIZERS_PARALLELISM=false
     deploy:

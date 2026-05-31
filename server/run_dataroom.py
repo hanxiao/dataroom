@@ -28,6 +28,15 @@ def free_port() -> int:
 def write_pi_config(agent_dir: Path, llama_url: str, jina_key: str, index_url: str):
     """Per-job, isolated Pi agent dir so default LLM = local Qwen and Jina MCP is wired."""
     agent_dir.mkdir(parents=True, exist_ok=True)
+    # Context window = the llama-server --ctx-size (default 131072, Qwen3.6 native max).
+    # Pi's built-in auto-compaction (core, fires in --mode json too) triggers at
+    # ctx > window - reserveTokens; keepRecentTokens of recent context survives and older
+    # turns become an LLM summary. We scale reserve/keep with the window so we never
+    # overflow and don't compact prematurely.
+    ctx = int(os.environ.get("CONTEXT_WINDOW", os.environ.get("CTX_SIZE", "131072")))
+    max_tokens = 8192
+    reserve = max(max_tokens + 2048, ctx // 8)   # >= maxTokens, scales with window
+    keep_recent = max(16000, ctx // 3)           # healthy recent window survives compaction
     # default LLM: self-hosted Qwen3.6 (OpenAI-compatible llama.cpp server)
     (agent_dir / "models.json").write_text(json.dumps({
         "providers": {
@@ -36,7 +45,7 @@ def write_pi_config(agent_dir: Path, llama_url: str, jina_key: str, index_url: s
                 "api": "openai-completions",
                 "apiKey": "sk-local",
                 "compat": {"supportsDeveloperRole": False, "supportsReasoningEffort": False},
-                "models": [{"id": "qwen3.6", "contextWindow": 16384, "maxTokens": 4096}],
+                "models": [{"id": "qwen3.6", "contextWindow": ctx, "maxTokens": max_tokens}],
             }
         }
     }, indent=2))
@@ -45,11 +54,8 @@ def write_pi_config(agent_dir: Path, llama_url: str, jina_key: str, index_url: s
         "defaultModel": "qwen3.6",
         "defaultThinkingLevel": "off",
         "enableInstallTelemetry": False,
-        # Pi has built-in auto-compaction (core, fires in --mode json too). With a 16K
-        # window we trigger early: compaction at >16384-5000 tokens, keeping the most
-        # recent 8000 and replacing older turns with an LLM summary. maxTokens (4096) <=
-        # reserveTokens (5000) so a full model response never overflows the window.
-        "compaction": {"enabled": True, "keepRecentTokens": 8000, "reserveTokens": 5000},
+        "compaction": {"enabled": True, "keepRecentTokens": keep_recent,
+                       "reserveTokens": reserve},
     }, indent=2))
     # Jina MCP (search_web / read_url / embeddings) — hosted endpoint
     (agent_dir / "mcp.json").write_text(json.dumps({
