@@ -96,9 +96,18 @@
   .prev img{max-width:100%;height:auto;border:1px solid var(--line)}
   @media(max-width:760px){
     .hero{grid-template-columns:1fr}
+    .hero > div{border-right:none;border-bottom:1px solid var(--line)}
     .split{grid-template-columns:1fr}
     .treecol{border-right:none;border-bottom:1px solid var(--line)}
     pre.tree,.prev{max-height:40vh}}
+  @media(max-width:560px){
+    .wrap{padding:16px 14px}
+    .grid{grid-template-columns:1fr}        /* one vital per row, never cramped */
+    .cell{border-left:1px solid var(--line)}
+    .row .name{width:auto;max-width:55%}
+    .feed li{white-space:normal}            /* let activity wrap instead of clipping */
+    .foot{flex-direction:column;gap:8px;align-items:flex-start}
+    header{flex-wrap:wrap;gap:4px}}
   .foot{display:flex;justify-content:space-between;color:var(--mut);font-size:11px;padding-top:12px}
   .btn{border:1px solid var(--line);background:var(--bg);color:var(--fg);
     padding:6px 12px;cursor:pointer;font:inherit;text-decoration:none}

@@ -195,10 +195,20 @@ CORRECTIVE_PROMPT = (
     "SUMMARY.md present={summary_exists}. Remove DONE from STATUS.md, keep researching the open "
     "questions with new sources, and only write DONE again once the floor is actually met."
 )
+# Forced consolidation cycle (the mechanical edit/merge lever). Injected every N cycles so the
+# agent actually read+edits existing notes instead of only ever writing new ones.
+CONSOLIDATE_PROMPT = (
+    "CONSOLIDATION pass - do NOT do new web research this cycle. Run dataroom_index "
+    "({args:'{\"op\":\"outline\"}'}) and look for topics/ files that cover the same sub-topic or "
+    "overlap heavily. For each overlapping set: `read` them, MERGE into one richer, well-structured "
+    "file (keep every sourced claim and the union of their ## Sources), `edit` the survivor, and "
+    "`rm` the redundant files (the index drops them on the next search). Fix cross-links and update "
+    "OUTLINE.md. Also enrich any thin stub note you find. Goal: fewer, deeper, non-duplicated files."
+)
 
 
 def drive_rpc(job_dir: Path, agent_dir: Path, args, dataroom: Path,
-              min_files: int, sat_window: int, min_new: int):
+              min_files: int, sat_window: int, min_new: int, consolidate_every: int):
     """Drive one persistent `pi --mode rpc` session. Returns (turns, stop_reason, floor)."""
     env = dict(os.environ)
     env["PI_CODING_AGENT_DIR"] = str(agent_dir)
@@ -321,7 +331,14 @@ def drive_rpc(job_dir: Path, agent_dir: Path, args, dataroom: Path,
             # Re-engage the idle agent for the next cycle. NB: we use `prompt` (not `follow_up`)
             # because a follow_up sent to an already-idle rpc session is not delivered as a new
             # run; `prompt` is valid here since agent_end means the agent is no longer streaming.
-            msg = STALL_PROMPT if (recent_deltas and recent_deltas[-1] <= 0) else cont
+            # Every Nth cycle force a consolidation pass (read+merge) instead of new research, so
+            # the agent enriches existing notes rather than only ever adding new files.
+            if consolidate_every and turn % consolidate_every == 0:
+                msg = CONSOLIDATE_PROMPT
+            elif recent_deltas and recent_deltas[-1] <= 0:
+                msg = STALL_PROMPT
+            else:
+                msg = cont
             send({"type": "prompt", "message": msg})
     except KeyboardInterrupt:
         stop_reason = "interrupted"
@@ -371,6 +388,7 @@ def main():
     min_files = int(os.environ.get("MIN_FILES", "100"))
     sat_window = int(os.environ.get("SATURATION_WINDOW", "3"))
     min_new = int(os.environ.get("MIN_NEW_FILES_PER_TURN", "2"))
+    consolidate_every = int(os.environ.get("CONSOLIDATE_EVERY", "4"))   # 0 = off
 
     llama_url = os.environ.get("LLAMA_URL", "http://localhost:8080")
     jina_key = os.environ.get("JINA_API_KEY", "")
@@ -399,7 +417,7 @@ def main():
     turn, stop_reason, fm = 0, "error_pi_exited", floor_metrics(dataroom)
     try:
         turn, stop_reason, fm = drive_rpc(job_dir, agent_dir, args, dataroom,
-                                          min_files, sat_window, min_new)
+                                          min_files, sat_window, min_new, consolidate_every)
     except KeyboardInterrupt:
         stop_reason = "interrupted"
     finally:

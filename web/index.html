@@ -61,6 +61,18 @@
   .minibar{display:inline-block;width:54px;height:7px;border:1px solid var(--line);
     position:relative;vertical-align:middle}
   .minibar > i{position:absolute;left:0;top:0;bottom:0;background:var(--fg)}
+  /* mobile: stack the jobs row so it never overflows a narrow screen */
+  @media(max-width:600px){
+    .wrap{padding:32px 16px}
+    .jhead{display:none}
+    .job{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;padding:12px 0}
+    .job .q{flex:1 1 100%;order:-1;white-space:normal}   /* query on its own first line */
+    .job .st{flex:0 0 auto}
+    .job .pg{flex:1 1 auto;text-align:left}
+    .job .bar{flex:0 0 auto}
+    .job .dl{margin-left:auto}
+    .hint{min-width:0}
+  }
 </style>
 </head>
 <body>

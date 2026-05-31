@@ -10,16 +10,34 @@ MODEL_REPO="${MODEL_REPO:-unsloth/Qwen3.6-35B-A3B-MTP-GGUF}"
 MODEL_FILE="${MODEL_FILE:-Qwen3.6-35B-A3B-UD-Q3_K_XL.gguf}"
 
 # --- Preflight: fail fast BEFORE the long install + 17GB download ----------------
+# The Jina API key powers the agent's web research (jina search / jina read). It is REQUIRED
+# (the local v5-nano embedder does NOT need it). Provide it by editing .env, or inline:
+#   JINA_API_KEY=jina_xxx bash scripts/setup.sh
+ENV_KEY="${JINA_API_KEY:-}"          # a key passed in the environment (inline), if any
+
 if [ ! -f .env ]; then
-  echo "ERROR: no .env found. Run: cp .env.example .env  then set JINA_API_KEY." >&2
-  exit 1
+  if [ -n "$ENV_KEY" ] && [ "$ENV_KEY" != "jina_xxxx" ]; then
+    cp .env.example .env
+    sed -i "s|^JINA_API_KEY=.*|JINA_API_KEY=$ENV_KEY|" .env
+    echo "Created .env with the JINA_API_KEY from your environment."
+  else
+    echo "ERROR: no JINA_API_KEY. Either:" >&2
+    echo "  cp .env.example .env   and edit JINA_API_KEY,  or" >&2
+    echo "  JINA_API_KEY=jina_xxx bash scripts/setup.sh   (free key: https://jina.ai/api-dashboard/)" >&2
+    exit 1
+  fi
 fi
 
-# JINA_API_KEY must be set and changed from the placeholder, or every job 401s mid-run.
+# If .env still holds the placeholder but a key was passed inline, inject it.
 JINA_API_KEY="$(grep -E '^JINA_API_KEY=' .env | head -n1 | cut -d= -f2-)"
+if { [ -z "$JINA_API_KEY" ] || [ "$JINA_API_KEY" = "jina_xxxx" ]; } \
+   && [ -n "$ENV_KEY" ] && [ "$ENV_KEY" != "jina_xxxx" ]; then
+  sed -i "s|^JINA_API_KEY=.*|JINA_API_KEY=$ENV_KEY|" .env
+  JINA_API_KEY="$ENV_KEY"
+fi
 if [ -z "$JINA_API_KEY" ] || [ "$JINA_API_KEY" = "jina_xxxx" ]; then
   echo "ERROR: JINA_API_KEY in .env is still the placeholder. Edit .env and set a real key" >&2
-  echo "       (free key at https://jina.ai/api-dashboard/) before running setup." >&2
+  echo "       (free key at https://jina.ai/api-dashboard/), or pass JINA_API_KEY=... inline." >&2
   exit 1
 fi
 
