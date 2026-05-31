@@ -9,7 +9,7 @@ Pi `--mode json` emits one JSON object per line. We surface:
   - PROGRESS toward the outcome floor (STATUS.md checkboxes + substantive-file floor),
   - the stop_reason once the run ends (from run_meta.json).
 """
-import json, os, urllib.request
+import json, os, re, urllib.request
 from pathlib import Path
 
 CONTEXT_WINDOW = int(os.environ.get("CONTEXT_WINDOW", os.environ.get("CTX_SIZE", "131072")))
@@ -154,6 +154,22 @@ def _inner_mcp_tool(args) -> str:
     return "mcp"
 
 
+def _dist_key(name: str, args) -> str:
+    """Distribution bucket: split the opaque `bash` bar into jina:<sub> when it runs the CLI
+    (and keep the legacy mcp:<inner> split for old logs)."""
+    if name == "mcp":
+        return f"mcp:{_inner_mcp_tool(args)}"
+    if name == "bash":
+        a = _as_obj(args)
+        cmd = str(a.get("command") or a.get("cmd") or "")
+        m = re.search(r"\bjina\s+([a-z][a-z\-]*)", cmd)
+        if m:
+            return f"jina:{m.group(1)}"
+        if re.search(r"\bjina\b", cmd):
+            return "jina"
+    return name
+
+
 def _summarize(tool: str, args) -> str:
     """One-line, human-readable description of a tool call for the activity feed."""
     a = _as_obj(args)
@@ -232,7 +248,7 @@ def parse_pi_log(log_path: Path, job_dir: Path) -> dict:
                 elif t == "tool_execution_start":
                     name = ev.get("toolName") or "unknown"
                     args = ev.get("args")
-                    key = f"mcp:{_inner_mcp_tool(args)}" if name == "mcp" else name
+                    key = _dist_key(name, args)
                     tool_counts[key] = tool_counts.get(key, 0) + 1
                     tool_calls += 1
                     recent.append({"turn": turns, "tool": name, "text": _summarize(name, args)})

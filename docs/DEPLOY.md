@@ -72,7 +72,7 @@ is rejected and the agent is nudged to keep going. The orchestrator writes `run_
 ## How the autonomy works
 - Per job, the orchestrator writes an isolated Pi agent dir (`PI_CODING_AGENT_DIR`) with:
   - `models.json` → default model = local Qwen (`http://llama-server:8080/v1`)
-  - `mcp.json` → Jina MCP (`https://mcp.jina.ai/v1`)
+  - (no `mcp.json`) → Jina access is the `jina` CLI on PATH, called from bash; reads JINA_API_KEY from env
 - It then loops `pi --mode json --continue` (the same per-cwd session resumes across process
   invocations) loading the `dataroom` skill and the `dataroom_index` extension. Qwen drives its
   own research loop; the orchestrator only enforces the floor/ceiling and zips `dataroom/`.

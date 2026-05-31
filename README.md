@@ -8,9 +8,10 @@ a fixed time/turn cap), incrementally building a well-organized **dataroom** on 
 - **Default LLM**: self-hosted **Qwen3.6-35B-A3B** (the same model + MTP serving used by
   [`ki-extractor`](https://github.com/hanxiao/ki-extractor)) on a single **L4 24GB** GPU via llama.cpp.
 - **Tools exposed to the agent** (no giant prompt — just expose tools and let it drive):
-  - **Jina MCP** (`search_web`, `read_url`, `embeddings`, ...) via `https://mcp.jina.ai/v1`,
-    bridged by pi-mcp-adapter as one lazy `mcp` proxy tool; plus **`jina-cli`** on PATH for
-    composable/piped ops (`jina search Q | jina rerank R`) that keep intermediates out of context
+  - **`jina` CLI** on PATH (search / read / rerank / embed / dedup / ...), driven from bash and
+    composable via pipes (`jina search Q | jina rerank R`, `cat urls.txt | jina read`,
+    `xargs -P 8` for parallel fan-out) so bulky intermediates stay out of the LLM context. No
+    Jina MCP / adapter — CLI-only is leaner and matches how the model actually researches
   - **jina-embeddings-v5-nano** preloaded for the dataroom index (embed / semantic search / dedup),
     with server-side reconciliation so it never silently drifts from disk
   - `read` / `write` / `edit` / `bash` (Pi built-ins) — so it can also write code, verify, and plot
@@ -21,7 +22,7 @@ a fixed time/turn cap), incrementally building a well-organized **dataroom** on 
 
 ## Design philosophy
 
-The agent is *not* micromanaged. We expose Jina MCP + an embedding-backed dataroom index
+The agent is *not* micromanaged. We expose the jina CLI + an embedding-backed dataroom index
 and a one-page methodology skill, then let Qwen drive its own loop. Before adding anything
 to the dataroom it must `dataroom_index search` first to avoid duplicates and keep structure.
 
@@ -30,7 +31,7 @@ HTTP POST /jobs {query}                  async job (uuid)
    -> orchestrator (run_dataroom.py)
         loop:
           pi --mode json --continue  (same per-cwd session)   <- autonomous Qwen turns
-          agent uses Jina MCP + jina-cli + dataroom_index + bash
+          agent uses the jina CLI + dataroom_index + bash
           until the coverage FLOOR is met (DONE is rejected before then),
           or it saturates (diminishing returns), or a hard safety ceiling trips
    -> zip dataroom/  ->  GET /jobs/{id}/result  (download .zip)

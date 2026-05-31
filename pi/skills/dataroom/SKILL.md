@@ -13,26 +13,26 @@ comprehensive (or you are told to stop). Quality and coverage over speed.
 
 ## Tools you have
 
-- **Jina MCP** (via the `mcp` proxy tool). Discover with `mcp({ search: "..." })`, call with
-  `mcp({ tool: "...", args: "{...}" })`. Key tools:
-  - `search_web` — find current web sources/news. Accepts a single query or an array of
-    queries for parallel search. Prefer primary sources.
-  - `read_url` — fetch a URL as clean markdown (bypasses paywalls). Pass `withAllImages` when
-    figures/charts on the page matter.
-  - `search_arxiv` — academic papers and preprints. Use for any technical/scientific claim,
-    benchmarks, methods, or to ground the dataroom in primary research rather than blog posts.
-  - `search_images` — find diagrams, charts, architecture figures, product screenshots. Use
-    `return_url:true` and save the image into `dataroom/figures/` as visual evidence (cite source).
-  - `expand_query` — turn one query into several diverse ones when a topic is under-covered
-    (search broader/deeper). `embeddings` — embed text when needed.
+- **`jina` CLI** (on PATH; use it from `bash`). Your primary tool for the open web. Discover
+  with `jina --help` / `jina <cmd> --help`. Key commands:
+  - `jina search "Q"` — web search (also `--arxiv`, `--ssrn`, `--images`, `--blog`, `-n N`,
+    `--time d`). Prefer primary sources; use `--arxiv` for any technical/scientific claim.
+  - `jina read URL` — fetch a URL as clean markdown (bypasses paywalls); `--images` when
+    figures/charts matter, `--links` to keep hyperlinks.
+  - `jina rerank "what matters"` — rerank a list of results/URLs from stdin by relevance.
+  - `jina embed`, `jina dedup`, `jina classify` — when you need them.
+  - **Compose with pipes** so bulky intermediates never enter your context:
+    `jina search "Q" | jina rerank "the angle I care about" | head`, `cat urls.txt | jina read`.
+  - **Fan out in parallel** when you have several queries/URLs (the CLI is sequential per call):
+    `printf '%s\n' "q1" "q2" "q3" | xargs -P 8 -I{} jina search "{}"`, or
+    `cat urls.txt | xargs -P 8 -I{} jina read {} > sources/batch.md`. Use this instead of a
+    slow one-at-a-time loop when reading many sources.
+  Save fetched sources under `dataroom/sources/` and saved figures under `dataroom/figures/`
+  (cite the URL for each). `jina` reads your API key from the environment — just call it.
 - **`dataroom_index`** — semantic index over the dataroom (jina-embeddings-v5-nano).
   `dataroom_index({args:'{"op":"search","query":"...","k":5}'})` etc. (see below).
-- **`read` / `write` / `edit` / `bash`** — you may also write code, run it to verify a
-  claim or compute something, and produce charts/plots. Save artifacts into the dataroom.
-  For composable/batch web work, `jina` is on PATH in bash and pipes, so big intermediate
-  results stay out of your context: `jina search "Q" | jina rerank "what matters"`,
-  `cat urls.txt | jina read`, `jina search --arxiv "X" -n 10`. Discover with `jina --help`.
-  Use the `mcp` proxy for single search/read calls; reach for piped `jina` when composing.
+- **`read` / `write` / `edit` / `bash`** — you also write code, run it to verify a claim or
+  compute something, and produce charts/plots. Save artifacts into the dataroom.
 
 ## The dataroom layout (a sensible default under `dataroom/` — adapt as the topic needs)
 
@@ -46,7 +46,7 @@ dataroom/
                      # (or `STATUS: DONE` when finished). Open questions as `- [ ]` / `- [x]`.
   OUTLINE.md         # living table of contents / structure of the dataroom
   topics/            # one markdown file per sub-topic; the substance
-  sources/           # raw captured source material (cleaned markdown from read_url)
+  sources/           # raw captured source material (cleaned markdown from `jina read`)
   data/              # datasets, csv/json you extracted
   figures/           # plots/charts and images you saved (with script/source for each)
   reports/           # synthesized write-ups, summaries, comparisons
@@ -66,7 +66,8 @@ Every substantive note ends with a `## Sources` section listing URLs.
    The checkboxes are read for the progress bar, so keep them current. The contract is your
    promotion criteria — it defines when the dataroom is done.
 2. **Pick the highest-value open question** (80/20: the gap that most improves coverage).
-3. **Research it**: `search_web` for sources, `read_url` the best ones into `dataroom/sources/`.
+3. **Research it**: `jina search` for sources, `jina read` the best ones into `dataroom/sources/`
+   (fan out with `xargs -P` when there are several).
 4. **Before writing a note, DEDUP**: `dataroom_index({args:'{"op":"search","query":"<the fact/topic>","k":5}'})`.
    - If the result has `duplicate:true` (or a top hit at/above `dup_threshold`), `edit` that
      file to enrich it instead of creating a new one.

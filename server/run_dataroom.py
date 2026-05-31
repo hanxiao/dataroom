@@ -2,7 +2,7 @@
 """Orchestrator: runs the autonomous Pi harness loop for one dataroom job.
 
 - Boots the per-job index sidecar (jina-embeddings-v5-nano) backing `dataroom_index`.
-- Writes per-job Pi config (models.json -> local Qwen, mcp.json -> Jina MCP).
+- Writes per-job Pi config (models.json -> local Qwen). Jina access is the `jina` CLI on PATH.
 - Loops `pi --mode json --continue` (same per-cwd session) so Qwen keeps driving its own
   loop, using Jina MCP + dataroom_index + bash.
 
@@ -16,7 +16,7 @@ stopped is persisted to run_meta.json and surfaced on the dashboard.
 Most of the intelligence lives in the agent, not here: we expose tools + a one-page skill
 and let Qwen run the harness. This file only supervises the loop and enforces the floor/ceiling.
 """
-import argparse, json, os, subprocess, sys, time, zipfile, signal, socket, threading, urllib.request, urllib.error
+import argparse, json, os, re, subprocess, sys, time, zipfile, signal, socket, threading, urllib.request, urllib.error
 from collections import deque
 from pathlib import Path
 
@@ -66,19 +66,12 @@ def write_pi_config(agent_dir: Path, llama_url: str, jina_key: str, index_url: s
         "compaction": {"enabled": True, "keepRecentTokens": keep_recent,
                        "reserveTokens": reserve},
     }, indent=2))
-    # Jina MCP (search_web / read_url / embeddings) — hosted endpoint. pi has no built-in
-    # MCP client; pi-mcp-adapter (pi's official MCP extension) bridges this as a proxy tool.
-    (agent_dir / "mcp.json").write_text(json.dumps({
-        "mcpServers": {
-            "jina": {
-                "url": "https://mcp.jina.ai/v1",
-                "headers": {"Authorization": f"Bearer {jina_key}"},
-                "lifecycle": "lazy",
-            }
-        }
-    }, indent=2))
-    # dataroom_index extension target
-    os.environ["DATAROOM_INDEX_URL"] = index_url
+    # No Jina MCP: the agent uses the `jina` CLI via its bash tool (search/read/rerank/...).
+    # jina-cli reads JINA_API_KEY from the environment, which the pi subprocess inherits, so
+    # nothing to wire here. CLI-only is leaner (no pi-mcp-adapter, no proxy tool) and matches
+    # how the model actually researches (it overwhelmingly prefers the shell). For parallel
+    # fan-out (the one thing the old MCP parallel_* tools did), the skill points it at xargs -P.
+    os.environ["DATAROOM_INDEX_URL"] = index_url   # dataroom_index extension target
 
 
 def boot_index(job_dir: Path, index_port: int) -> subprocess.Popen:
@@ -135,10 +128,11 @@ def index_count(index_url: str) -> int:
 
 
 def count_jina_calls(log_path: Path) -> int:
-    """Paid Jina calls so far = tool_execution_start events on the `mcp` proxy tool.
+    """Paid Jina calls so far = `jina` CLI invocations in the agent's bash commands.
 
-    The self-hosted LLM is a sunk cost; Jina search_web/read_url/embeddings are billed
-    per call and all funnel through the single `mcp` proxy tool, so this bounds spend."""
+    The self-hosted LLM is a sunk cost; Jina search/read/rerank/embed (the `jina` CLI) are
+    billed per call, so counting them bounds spend. A piped command (`jina search | jina
+    rerank`) is two API calls, so we count each `jina ` occurrence, not each bash call."""
     n = 0
     if not log_path.exists():
         return n
@@ -149,16 +143,16 @@ def count_jina_calls(log_path: Path) -> int:
             f.seek(size - cap)
             f.readline()              # discard partial line
         for raw in f:
-            if b'"tool_execution_start"' not in raw:
+            if b'"tool_execution_start"' not in raw or b"bash" not in raw:
                 continue
             try:
                 ev = json.loads(raw.decode("utf-8", "ignore"))
             except Exception:
                 continue
-            if ev.get("type") == "tool_execution_start":
-                name = ev.get("toolName") or ""
-                if name == "mcp" or name.startswith("mcp:"):
-                    n += 1
+            if ev.get("type") == "tool_execution_start" and ev.get("toolName") == "bash":
+                args = ev.get("args") or {}
+                cmd = (args.get("command") or args.get("cmd") or "") if isinstance(args, dict) else ""
+                n += len(re.findall(r"\bjina\s", cmd))
     return n
 
 
@@ -172,10 +166,6 @@ def run_turn(job_dir: Path, agent_dir: Path, prompt: str, timeout: int) -> int:
         "--skill", str(REPO / "pi" / "skills" / "dataroom"),
         "--extension", str(REPO / "pi" / "extensions" / "dataroom-index.ts"),
     ]
-    # pi-mcp-adapter exposes Jina MCP (search_web/read_url) as the `mcp` proxy tool.
-    mcp_adapter = os.environ.get("PI_MCP_ADAPTER")
-    if mcp_adapter and Path(mcp_adapter).exists():
-        cmd += ["--extension", mcp_adapter]
     cmd.append(prompt)
     log = open(job_dir / "pi.log", "a")
     log.write(f"\n\n===== TURN @ {time.ctime()} =====\n")
@@ -240,8 +230,9 @@ FIRST_PROMPT = (
     "Research query: {query}\n\n"
     "Load and follow the `dataroom` skill. You are in autonomous dataroom-building mode. "
     "Build the dataroom under ./dataroom. Drive your own loop this turn: read state, pick "
-    "the highest-value open question, research with Jina MCP (search_web/read_url), dedup via "
-    "dataroom_index before writing, write sourced notes, verify with code when it matters, and "
+    "the highest-value open question, research with the jina CLI (jina search / jina read; fan "
+    "out many with xargs -P), dedup via dataroom_index before writing, write sourced notes, "
+    "verify with code when it matters, and "
     "keep STATUS.md/OUTLINE.md current. Do as much as you can before ending the turn."
 )
 CONT_PROMPT = (
