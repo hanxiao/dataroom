@@ -24,8 +24,10 @@ ENV PI_OFFLINE=0
 WORKDIR /app
 
 # Python deps. CUDA torch (cu124 wheels) so the embedder can use the GPU.
+# The cuda base ships pip 22.0.2 (no --break-system-packages); upgrade pip first.
 COPY server/requirements.txt server/requirements.txt
-RUN pip3 install --no-cache-dir --break-system-packages \
+RUN python3 -m pip install --no-cache-dir --upgrade pip \
+    && pip3 install --no-cache-dir \
         -r server/requirements.txt \
         --extra-index-url https://download.pytorch.org/whl/cu124
 
