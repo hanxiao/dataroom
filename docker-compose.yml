@@ -1,6 +1,12 @@
 services:
   llama-server:
-    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    # Pin this. `server-cuda` is a MOVING tag while everything else here is pinned (Pi,
+    # adapter, GGUF). The MTP/draft flags below are new and have already changed names once;
+    # a silent pull can break startup or drafting determinism. Set LLAMA_IMAGE in .env to an
+    # immutable digest before relying on this in production:
+    #   docker buildx imagetools inspect ghcr.io/ggml-org/llama.cpp:server-cuda  # copy sha256
+    #   LLAMA_IMAGE=ghcr.io/ggml-org/llama.cpp@sha256:<digest>
+    image: ${LLAMA_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda}
     container_name: daas-llama
     ports:
       - "8080:8080"
@@ -16,10 +22,11 @@ services:
               capabilities: [gpu]
     restart: unless-stopped
     # Qwen3.6-35B-A3B UD-Q3_K_XL + MTP draft on a single L4 24GB.
-    # Q3_K_XL weights (~17GB) leave ~6GB for KV cache. With flash-attn + q8_0 KV
-    # quantization, a large context fits. CTX_SIZE is overridable (see .env); the
-    # default targets the model's full 131072 window. If you OOM, lower CTX_SIZE
-    # (e.g. 65536) and re-check nvidia-smi.
+    # Q3_K_XL weights ~17GB. This is a HYBRID GDN+MoE model: only 10 of 40 layers carry a
+    # per-token KV cache (the other 30 keep a small fixed recurrent state), so per-token KV is
+    # tiny -- ~ctx*10.24KB at q8_0, i.e. ~1.3GB at the full 131072 window, not the multi-GB a
+    # dense 35B would need. Real headroom is dominated by the GDN recurrent-state pool, compute
+    # buffers, and the v5-nano embedder. Measure with nvidia-smi; lower CTX_SIZE if it OOMs.
     command: >
       --model /models/Qwen3.6-35B-A3B-UD-Q3_K_XL.gguf
       --host 0.0.0.0
@@ -39,7 +46,11 @@ services:
       --jinja
       --chat-template-file /templates/chat_template.jinja
       -fitt 512
-      --cache-reuse 256
+      # --cache-reuse intentionally OFF: this hybrid (Gated DeltaNet) model has documented
+      # recurrent-state cache-drift that can silently corrupt digits across the long
+      # --continue + auto-compaction loop (llama.cpp#21681), which is fatal for a factual
+      # dataroom. Re-enable `--cache-reuse 256` only once the fix is confirmed in the pinned
+      # image and verified by the numeric multi-turn smoke test in docs/DEPLOY.md.
 
   daas:
     build: .

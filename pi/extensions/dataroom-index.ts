@@ -37,7 +37,11 @@ export default function (pi: ExtensionAPI) {
     description:
       "Semantic index over the dataroom (jina-embeddings-v5-nano). ALWAYS run op=search " +
       "before adding content to avoid duplicates and find where new material belongs. " +
-      "ops: search{query,k}, add{path,text}, stats{}, outline{}. `args` is a JSON string.",
+      "search returns {results, duplicate, dup_threshold}: when duplicate==true the top hit " +
+      "is a near-duplicate -- edit that file instead of creating a new one. The index " +
+      "self-reconciles from disk, so op=add is an optional fast-path (files you write are " +
+      "found on the next search anyway). ops: search{query,k}, add{path,text}, stats{}, " +
+      "outline{}. `args` is a JSON string.",
     parameters: Type.Object({
       args: Type.String({
         description:
@@ -45,15 +49,35 @@ export default function (pi: ExtensionAPI) {
       }),
     }),
     async execute(_id, params) {
+      // Tolerate the common small-model failure modes: an already-parsed object, single
+      // quotes, or a trailing comma. Only error after a repair attempt, and echo what we
+      // received plus a known-good example so the model can self-correct in one step.
+      const raw: any = (params as any).args;
       let p: any;
-      try {
-        p = JSON.parse(params.args);
-      } catch {
-        return {
-          content: [{ type: "text", text: "args must be valid JSON" }],
-          isError: true,
-          details: {},
-        };
+      if (raw && typeof raw === "object") {
+        p = raw;
+      } else {
+        const s = String(raw ?? "");
+        try {
+          p = JSON.parse(s);
+        } catch {
+          try {
+            p = JSON.parse(
+              s.replace(/'/g, '"').replace(/,\s*([}\]])/g, "$1")
+            );
+          } catch {
+            return {
+              content: [{
+                type: "text",
+                text:
+                  `args must be a JSON string. received: ${s.slice(0, 120)}\n` +
+                  `example: {"op":"search","query":"competitor X pricing","k":5}`,
+              }],
+              isError: true,
+              details: {},
+            };
+          }
+        }
       }
       const op = String(p.op || "").toLowerCase();
       if (!["search", "add", "stats", "outline"].includes(op)) {

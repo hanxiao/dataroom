@@ -34,6 +34,33 @@ def _save_meta(job_id: str):
         pass
 
 
+def _run_meta(job_dir) -> dict:
+    """The orchestrator's end-of-run record: {stop_reason, done, floor, ...}."""
+    rm = job_dir / "run_meta.json"
+    if rm.exists():
+        try:
+            return json.loads(rm.read_text())
+        except Exception:
+            return {}
+    return {}
+
+
+def _status_for(job_dir, rc=None) -> tuple:
+    """Single source of truth for terminal status, shared by _run and _load_meta.
+
+    A zip is written for EVERY completed run (clean DONE or budget/ceiling stop), and is
+    independently downloadable, so its existence -- not rc -- decides done-vs-failed.
+    """
+    rmeta = _run_meta(job_dir)
+    if (job_dir / "dataroom.zip").exists():
+        status = "done" if rmeta.get("done") else "stopped"
+    elif rc not in (None, 0):
+        status = "failed"
+    else:
+        status = "failed"
+    return status, rmeta.get("stop_reason")
+
+
 def _load_meta(job_id: str) -> dict:
     """Recover job meta from disk (after a restart). Reconciles stale 'running' state."""
     job_dir = JOBS / job_id
@@ -47,7 +74,7 @@ def _load_meta(job_id: str) -> dict:
         except Exception:
             meta = {}
     if (job_dir / "dataroom.zip").exists():
-        meta["status"] = "done"
+        meta["status"], meta["stop_reason"] = _status_for(job_dir)
     elif meta.get("status") == "running":
         # app restarted mid-run; the worker thread is gone -> mark interrupted
         meta["status"] = "interrupted"
@@ -78,9 +105,10 @@ def _run(job_id: str, query: str, max_turns: int | None, max_seconds: int | None
     _save_meta(job_id)
     log = open(job_dir / "orchestrator.log", "a")
     rc = subprocess.call(cmd, cwd=str(HERE.parent), stdout=log, stderr=subprocess.STDOUT)
-    zip_path = job_dir / "dataroom.zip"
+    status, stop_reason = _status_for(job_dir, rc)
     with _lock:
-        _jobs[job_id]["status"] = "done" if zip_path.exists() and rc == 0 else "failed"
+        _jobs[job_id]["status"] = status
+        _jobs[job_id]["stop_reason"] = stop_reason
         _jobs[job_id]["rc"] = rc
         _jobs[job_id]["finished"] = time.time()
     _save_meta(job_id)

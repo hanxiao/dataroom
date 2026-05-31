@@ -21,8 +21,9 @@ ARG PI_VERSION=0.78.0
 RUN npm install -g @earendil-works/pi-coding-agent@${PI_VERSION} && npm cache clean --force
 ENV PI_BIN=pi PI_SKIP_VERSION_CHECK=1 PI_OFFLINE=0
 
-# pi has NO native MCP. The pi-mcp-adapter extension exposes MCP servers (Jina) as a single
-# `mcp` proxy tool. Install it globally + runtime deps; the orchestrator loads it with
+# pi has no built-in MCP client; pi-mcp-adapter (pi's official MCP extension) bridges MCP
+# servers (Jina) as a single `mcp` proxy tool — one ~200-token tool with lazy connect, not 20
+# eager tool defs. Install it globally + runtime deps; the orchestrator loads it with
 # --extension. It reads mcp.json from PI_CODING_AGENT_DIR (set per job).
 ARG MCP_ADAPTER_VERSION=2.8.0
 ENV PI_MCP_ADAPTER=/opt/pi-mcp/node_modules/pi-mcp-adapter/index.ts
@@ -35,6 +36,13 @@ WORKDIR /app
 # Python deps. torch is already in the base image, so it is NOT reinstalled here.
 COPY server/requirements.txt server/requirements.txt
 RUN pip install -r server/requirements.txt
+
+# jina-cli (pure-python httpx+click, OS-independent) on PATH for the agent's bash tool, so it
+# can compose/pipe Jina ops (`jina search Q | jina rerank R`, `cat urls.txt | jina read`) and
+# keep bulky intermediates out of the LLM context. Complements (does not replace) the `mcp`
+# proxy, which stays primary for single search/read calls. NB: jina-grep-cli is Apple-Silicon
+# /MLX-only and intentionally NOT installed here — the CUDA index_service.py is its analogue.
+RUN pip install jina-cli
 
 # App code
 COPY server ./server

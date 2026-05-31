@@ -1,19 +1,23 @@
 # Dataroom-as-a-Service (DaaS)
 
-Give it a research query. It spins up an autonomous [Pi](https://pi.dev) harness that
-loops forever (until the dataroom is comprehensive or a budget is hit), crawling and
-researching the web, and incrementally building a well-organized **dataroom** on disk.
+Give it a research query. It spins up an autonomous [Pi](https://pi.dev) harness that keeps
+researching the web until the dataroom is **comprehensive** (a measurable coverage floor — not
+a fixed time/turn cap), incrementally building a well-organized **dataroom** on disk.
 
 - **Brain**: [Pi coding agent](https://pi.dev) (`@earendil-works/pi-coding-agent`) running headless.
 - **Default LLM**: self-hosted **Qwen3.6-35B-A3B** (the same model + MTP serving used by
   [`ki-extractor`](https://github.com/hanxiao/ki-extractor)) on a single **L4 24GB** GPU via llama.cpp.
 - **Tools exposed to the agent** (no giant prompt — just expose tools and let it drive):
-  - **Jina MCP** (`search_web`, `read_url`, `embeddings`, ...) via `https://mcp.jina.ai/v1`
-  - **jina-embeddings-v5-nano** preloaded on CPU for the dataroom index (embed / semantic search / dedup)
+  - **Jina MCP** (`search_web`, `read_url`, `embeddings`, ...) via `https://mcp.jina.ai/v1`,
+    bridged by pi-mcp-adapter as one lazy `mcp` proxy tool; plus **`jina-cli`** on PATH for
+    composable/piped ops (`jina search Q | jina rerank R`) that keep intermediates out of context
+  - **jina-embeddings-v5-nano** preloaded for the dataroom index (embed / semantic search / dedup),
+    with server-side reconciliation so it never silently drifts from disk
   - `read` / `write` / `edit` / `bash` (Pi built-ins) — so it can also write code, verify, and plot
-- **Output**: when done, an async job returns a **`.zip` of the whole dataroom**.
-- **Live dashboard** (turbopuffer-style black/white): real-time context utilization, tool-call
-  count + distribution, dataroom file tree, and dataroom size. At `GET /jobs/{id}/dashboard`.
+- **Output**: when it stops, an async job returns a **`.zip` of the whole dataroom**.
+- **Live dashboard** (turbopuffer-style black/white): real-time context utilization, throughput,
+  tool-call distribution, **live activity feed**, **warnings/errors**, **progress-to-floor**, a
+  **stop-reason banner**, and the dataroom file tree. At `GET /jobs/{id}/dashboard`.
 
 ## Design philosophy
 
@@ -25,14 +29,21 @@ to the dataroom it must `dataroom_index search` first to avoid duplicates and ke
 HTTP POST /jobs {query}                  async job (uuid)
    -> orchestrator (run_dataroom.py)
         loop:
-          pi --mode json --continue  (same session)   <- autonomous Qwen turns
-          agent uses Jina MCP + dataroom_index + bash
-          until STATUS.md == DONE  or  budget exhausted
+          pi --mode json --continue  (same per-cwd session)   <- autonomous Qwen turns
+          agent uses Jina MCP + jina-cli + dataroom_index + bash
+          until the coverage FLOOR is met (DONE is rejected before then),
+          or it saturates (diminishing returns), or a hard safety ceiling trips
    -> zip dataroom/  ->  GET /jobs/{id}/result  (download .zip)
 ```
 
+Stopping is **outcome-first**: `DONE` is only honored once the dataroom holds enough
+substantive sourced files (`MIN_FILES`, default 100), all sub-questions are closed, and a
+`SUMMARY.md` exists. Turns/seconds/Jina-calls are only hard backstops. The reason it stopped
+is surfaced on the dashboard. See [`docs/DEPLOY.md`](docs/DEPLOY.md) and `.env.example`.
+
 Both containers use **prebuilt** base images (`pytorch/pytorch:*-runtime` for the app,
-`ghcr.io/ggml-org/llama.cpp:server-cuda` for the LLM) so there is no torch/CUDA recompile.
+`ghcr.io/ggml-org/llama.cpp:server-cuda` for the LLM, pinnable via `LLAMA_IMAGE`) so there is
+no torch/CUDA recompile.
 
 ## Architecture (containers)
 
@@ -41,13 +52,14 @@ llama-server (:8080)   GPU   Qwen3.6-35B-A3B UD-Q3_K_XL + MTP draft, ctx 131072 
 daas        (:8000)    GPU   FastAPI + Pi harness + v5-nano embedding (~0.5GB)
 ```
 
-VRAM budget on L4 (24GB): Q3_K_XL weights ~17GB leave ~6GB for the KV cache. With
-`--flash-attn` + **q8_0 KV quantization** the context window stretches far past the Q4 setups
-(ki-extractor's Q4 weights are ~22GB so it can only do 8K-16K; our Q3 frees room for much
-more). Default `CTX_SIZE=131072` targets Qwen3.6's full native window — **verify with
-`nvidia-smi` on your box and lower `CTX_SIZE` (e.g. 65536) if it OOMs.** The v5-nano embedder
-(~212M params, ~0.5GB) runs on the GPU by default (`EMBED_DEVICE=cuda`); set `EMBED_DEVICE=cpu`
-to move it off-GPU if you need the headroom.
+VRAM budget on L4 (24GB): Q3_K_XL weights ~17GB. Qwen3.6-35B-A3B is a **hybrid GDN+MoE**
+model — only **10 of 40 layers carry a per-token KV cache** (the other 30 are Gated DeltaNet
+layers keeping a small fixed recurrent state), so per-token KV is tiny: roughly `ctx*10.24KB`
+at q8_0, i.e. **~1.3GB at the full 131072 window** (not the multi-GB a dense 35B would need).
+Default `CTX_SIZE=131072` targets Qwen3.6's native window; the real headroom pressure is the
+GDN recurrent-state pool + compute buffers + the embedder, so **verify with `nvidia-smi` and
+lower `CTX_SIZE` only if it's tight.** The v5-nano embedder (~239M params, ~0.5GB) runs on the
+GPU by default (`EMBED_DEVICE=cuda`); set `EMBED_DEVICE=cpu` for zero VRAM contention.
 
 The Pi context window, the dashboard's context-utilization bar, and Pi's built-in
 auto-compaction all key off the same `CTX_SIZE`, so they stay consistent automatically.

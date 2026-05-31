@@ -45,13 +45,13 @@ sudo docker compose up -d --build
 
 echo "=== Waiting for llama-server ==="
 for i in $(seq 1 90); do
-  if curl -s http://localhost:8080/health | grep -q ok; then echo "llama-server ready"; break; fi
+  if curl -fsS http://localhost:8080/health >/dev/null 2>&1; then echo "llama-server ready"; break; fi
   echo "waiting llama... ($i/90)"; sleep 5
 done
 
 echo "=== Waiting for DaaS API ==="
 for i in $(seq 1 30); do
-  if curl -s http://localhost:8000/health | grep -q true; then echo "DaaS API ready"; break; fi
+  if curl -fsS http://localhost:8000/health 2>/dev/null | grep -q '"ok":true'; then echo "DaaS API ready"; break; fi
   echo "waiting api... ($i/30)"; sleep 3
 done
 

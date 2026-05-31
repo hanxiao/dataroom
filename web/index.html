@@ -33,15 +33,23 @@
 </div>
 <script>
 const $=id=>document.getElementById(id);
-$("go").onclick=async()=>{
-  const query=$("q").value.trim();if(!query)return;
-  $("out").textContent="submitting…";
-  const r=await fetch("/jobs",{method:"POST",headers:{"content-type":"application/json"},
-    body:JSON.stringify({query})});
-  const d=await r.json();
-  if(d.job_id){
-    location.href=`/jobs/${d.job_id}/dashboard`;
-  }else{$("out").textContent="error: "+JSON.stringify(d);}
+const go=$("go");
+go.onclick=async()=>{
+  if(go.disabled)return;
+  const query=$("q").value.trim();
+  if(!query){$("out").textContent="enter a research query first.";return;}
+  go.disabled=true;$("out").textContent="submitting…";
+  try{
+    const r=await fetch("/jobs",{method:"POST",headers:{"content-type":"application/json"},
+      body:JSON.stringify({query})});
+    if(!r.ok){throw new Error("HTTP "+r.status+" "+(await r.text()).slice(0,200));}
+    const d=await r.json();
+    if(d.job_id){location.href=`/jobs/${d.job_id}/dashboard`;return;}
+    throw new Error(JSON.stringify(d));
+  }catch(e){
+    $("out").textContent="error: "+(e.message||e);
+    go.disabled=false;
+  }
 };
 </script>
 </body>

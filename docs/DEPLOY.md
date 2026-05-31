@@ -42,21 +42,42 @@ curl -s -OJ localhost:8000/jobs/$JOB/result
 ```
 
 ## VRAM / OOM notes (L4 24GB)
-- Q3_K_XL weights ~17GB. KV cache at `--ctx-size 16384 --parallel 1 --flash-attn 1` ~4GB.
-- The `v5-nano` embedder runs on the GPU by default (`EMBED_DEVICE=cuda`, ~0.5GB fp16),
-  sharing the L4 with the LLM → total ~22GB, ~2GB headroom. The `daas` container is granted
-  GPU access in `docker-compose.yml`.
-- Do **not** raise `--parallel` or `--ctx-size` without re-checking `nvidia-smi`. If it gets
-  tight, set `EMBED_DEVICE=cpu` on the `daas` service to move the embedder off the GPU (zero
-  VRAM contention), or drop `n-predict`/use a smaller quant.
+- Q3_K_XL weights ~17GB. Qwen3.6-35B-A3B is **hybrid GDN+MoE**: only **10 of 40 layers carry a
+  per-token KV cache** (`full_attention_interval=4`); the other 30 are Gated DeltaNet layers
+  with a small fixed recurrent state. So per-token KV ≈ `ctx * 10 layers * 2 (K+V) * 256 head_dim
+  * 1 byte (q8_0)` ≈ `ctx * 10.24KB`: **~0.17GB at 16384, ~1.3GB at the full 131072 window**
+  (≈2x those for f16 KV). This is far smaller than a dense 35B's KV — do not size by dense rules.
+- The `v5-nano` embedder runs on the GPU by default (`EMBED_DEVICE=cuda`, ~0.5GB), sharing the
+  L4. With weights ~17GB + KV ~1.3GB + embedder ~0.5GB you have comfortable headroom at 131072;
+  the real pressure is the GDN recurrent-state pool + compute buffers. **Always confirm with
+  `nvidia-smi`** rather than trusting any single number here.
+- If it gets tight, set `EMBED_DEVICE=cpu` (zero VRAM contention), lower `CTX_SIZE`, or use a
+  smaller quant. Keep `CTX_SIZE` / `CONTEXT_WINDOW` / the dashboard denominator in sync (the
+  default is 131072 everywhere).
+
+## Hybrid prompt-cache caveat (correctness)
+`--cache-reuse` is intentionally **disabled** in `docker-compose.yml`. This Gated-DeltaNet model
+has documented recurrent-state cache drift (llama.cpp#21681) that can silently corrupt digits
+across the long `--continue` + auto-compaction loop — fatal for a factual dataroom. Before
+re-enabling it on a pinned image, run a smoke test: feed a few known numeric facts through a
+multi-turn compacting loop and diff the agent's recall against a fresh-prefill answer.
+
+## Stopping & budget
+Stopping is outcome-first (see `.env.example`): the loop runs until the **coverage floor** is met
+(`MIN_FILES` substantive sourced files + all sub-questions closed + `SUMMARY.md`), or it saturates,
+or a hard safety ceiling trips (`MAX_SECONDS` / `MAX_TURNS` / `MAX_JINA_CALLS`). A premature `DONE`
+is rejected and the agent is nudged to keep going. The orchestrator writes `run_meta.json`
+(`stop_reason`, floor metrics) and the dashboard shows the stop reason + progress-to-floor.
 
 ## How the autonomy works
 - Per job, the orchestrator writes an isolated Pi agent dir (`PI_CODING_AGENT_DIR`) with:
   - `models.json` → default model = local Qwen (`http://llama-server:8080/v1`)
   - `mcp.json` → Jina MCP (`https://mcp.jina.ai/v1`)
-- It then loops `pi --mode json --continue` (same session) loading the `dataroom` skill and
-  the `dataroom_index` extension. Qwen drives its own research loop; we only supervise budgets
-  and stop when `STATUS.md` starts with `DONE`, then zip `dataroom/`.
+- It then loops `pi --mode json --continue` (the same per-cwd session resumes across process
+  invocations) loading the `dataroom` skill and the `dataroom_index` extension. Qwen drives its
+  own research loop; the orchestrator only enforces the floor/ceiling and zips `dataroom/`.
 
-## Updating Pi
-Pinned via `PI_VERSION` build arg in the Dockerfile. Bump it and `docker compose build daas`.
+## Updating Pi / pinning llama.cpp
+Pi is pinned via `PI_VERSION` in the Dockerfile (bump + `docker compose build daas`). Pin the
+llama.cpp image too: set `LLAMA_IMAGE` in `.env` to a digest from
+`docker buildx imagetools inspect ghcr.io/ggml-org/llama.cpp:server-cuda`.

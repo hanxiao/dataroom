@@ -26,8 +26,18 @@
   .dot.on{background:var(--fill)}
   .blink{animation:b 1s steps(2) infinite}
   @keyframes b{50%{opacity:.2}}
+  /* stop-reason / state banner */
+  .banner{border:1px solid var(--line);border-left-width:4px;padding:8px 12px;margin:0;
+    border-bottom:none;font-size:12px;display:none}
+  .banner b{letter-spacing:.04em}
   .query{border-bottom:1px solid var(--line);padding:10px 0;color:var(--mut);font-size:12px}
   .query b{color:var(--fg)}
+  /* progress-to-floor */
+  .prog{border-bottom:1px solid var(--line);padding:12px 0}
+  .prog .k{color:var(--mut);font-size:10px;text-transform:uppercase;letter-spacing:.08em}
+  .pbar{height:14px;border:1px solid var(--line);position:relative;margin-top:8px;overflow:hidden}
+  .pbar > i{position:absolute;left:0;top:0;bottom:0;background:var(--fill);width:0%}
+  .pbar > .floor{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--fill);opacity:.6}
   .grid{display:grid;grid-template-columns:1fr 1fr;gap:0;border-bottom:1px solid var(--line)}
   .cell{border-right:1px solid var(--line);border-bottom:1px solid var(--line);
     padding:14px 16px}
@@ -35,6 +45,7 @@
   .k{color:var(--mut);font-size:10px;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px}
   .big{font-size:26px;font-weight:600;letter-spacing:-.01em}
   .sub{color:var(--mut);font-size:11px;margin-top:2px}
+  .stale .big{opacity:.4}
   /* context bar */
   .bar{height:14px;border:1px solid var(--line);position:relative;margin-top:10px;overflow:hidden}
   .bar > i{position:absolute;left:0;top:0;bottom:0;background:var(--fill);width:0%}
@@ -46,9 +57,19 @@
   .row .track{flex:1;height:10px;border:1px solid var(--line);position:relative}
   .row .track > i{position:absolute;left:0;top:0;bottom:0;background:var(--fill)}
   .row .n{width:34px;text-align:right;color:var(--mut)}
-  /* tree */
+  /* panels: activity + errors + tree */
   .panel{padding:14px 16px;border-bottom:1px solid var(--line)}
-  pre.tree{margin:0;white-space:pre;overflow:auto;max-height:420px;font-size:12px}
+  .feed{margin:0;list-style:none;padding:0;max-height:200px;overflow:auto;font-size:12px}
+  .feed li{display:flex;gap:8px;padding:1px 0;white-space:nowrap;overflow:hidden}
+  .feed li .t{color:var(--mut);width:42px;flex:none}
+  .feed li .v{overflow:hidden;text-overflow:ellipsis}
+  .feed li.live .v{font-weight:600}
+  .errs{margin:0;list-style:none;padding:0;max-height:170px;overflow:auto;font-size:12px}
+  .errs li{border-left:3px solid var(--line);padding:2px 0 2px 8px;margin:3px 0;white-space:nowrap;
+    overflow:hidden;text-overflow:ellipsis}
+  .errs li .g{font-weight:700;margin-right:6px}
+  .empty{color:var(--mut);font-size:11px}
+  pre.tree{margin:0;white-space:pre;overflow:auto;max-height:360px;font-size:12px}
   .tree .d{font-weight:600}
   .tree .s{color:var(--mut)}
   .foot{display:flex;justify-content:space-between;color:var(--mut);font-size:11px;padding-top:12px}
@@ -63,7 +84,14 @@
     <h1>Dataroom-as-a-Service</h1>
     <div class="meta">job <b id="jid">__JOB_ID__</b> · <span id="st"><span class="dot blink"></span>connecting</span></div>
   </header>
+
+  <div class="banner" id="banner"></div>
   <div class="query">QUERY&nbsp;&nbsp;<b id="q">—</b></div>
+
+  <div class="prog">
+    <div class="k">Progress <span id="proglabel" class="sub" style="margin:0"></span></div>
+    <div class="pbar" id="pbar"><i></i><span class="floor" id="floortick" style="left:100%"></span></div>
+  </div>
 
   <div class="grid">
     <div class="cell">
@@ -80,7 +108,7 @@
     <div class="cell">
       <div class="k">Tool calls</div>
       <div class="big" id="toolN">0</div>
-      <div class="sub"><span id="turns">0</span> agent turns · cost $<span id="cost">0.00</span></div>
+      <div class="sub"><span id="turns">0</span> agent turns · <span id="subfiles">0</span>/<span id="minfiles">0</span> sourced files</div>
     </div>
     <div class="cell">
       <div class="k">Dataroom size</div>
@@ -89,8 +117,17 @@
     </div>
     <div class="cell">
       <div class="k">Tool distribution</div>
-      <div class="dist" id="dist"><div class="sub">no calls yet</div></div>
+      <div class="dist" id="dist"><div class="empty">no calls yet</div></div>
     </div>
+    <div class="cell">
+      <div class="k">Warnings / errors <span id="errN" class="sub" style="margin:0"></span></div>
+      <ul class="errs" id="errs"><li class="empty" style="border:none;padding-left:0">no errors</li></ul>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="k">Activity</div>
+    <ul class="feed" id="feed"><li class="empty">waiting for the agent…</li></ul>
   </div>
 
   <div class="panel">
@@ -100,13 +137,14 @@
 
   <div class="foot">
     <div>auto-refresh 3s · <span id="ts">—</span></div>
-    <a class="btn" id="dl" href="#" >download dataroom.zip</a>
+    <a class="btn" id="dl" href="#">download dataroom.zip</a>
   </div>
 </div>
 
 <script>
 const JOB="__JOB_ID__";
 const $=id=>document.getElementById(id);
+let lastOk=0;
 
 function human(b){
   if(b<1024)return b+" B";
@@ -126,17 +164,31 @@ function renderTree(node,prefix="",isLast=true,root=true){
     out+=`${prefix}${branch}<span class="d">${node.name}/</span>\n`;
     const ch=node.children||[];
     const np=prefix+(isLast?"   ":"│  ");
-    ch.forEach((c,i)=>out+=renderTree(c,np,i===ch.length-1,false));
+    ch.forEach((c,i)=>out+=renderTree(c,i===ch.length-1?np:np,i===ch.length-1,false));
   }else{
     out+=`${prefix}${branch}${node.name} <span class="s">(${human(node.size)})</span>\n`;
   }
   return out;
 }
+function esc(s){return String(s==null?"":s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));}
+
+// stop_reason -> [kind, label]. kind drives the left border emphasis (no color).
+const STOP={
+  done_floor_met:["done","DONE — coverage floor met"],
+  done_saturated:["done","DONE — saturated (diminishing returns)"],
+  ceiling_seconds:["stop","STOPPED — wall-clock ceiling reached (partial, downloadable)"],
+  ceiling_turns:["stop","STOPPED — turn ceiling reached (partial, downloadable)"],
+  ceiling_cost:["stop","STOPPED — Jina-call budget ceiling reached (partial, downloadable)"],
+  turn_timeout:["stop","STOPPED — a turn timed out"],
+  error_index_boot:["err","ERROR — index sidecar failed to start"],
+  interrupted:["err","INTERRUPTED"],
+};
 function setStatus(s,done){
   const el=$("st");
   if(done){el.innerHTML='<span class="dot on"></span>done';}
   else if(s==="running"){el.innerHTML='<span class="dot on blink"></span>running';}
-  else if(s==="failed"){el.innerHTML='<span class="dot on"></span>failed';}
+  else if(s==="stopped"){el.innerHTML='<span class="dot on"></span>stopped';}
+  else if(s==="failed"||s==="interrupted"){el.innerHTML='<span class="dot on"></span>'+s;}
   else{el.innerHTML='<span class="dot"></span>'+(s||"queued");}
 }
 
@@ -145,39 +197,89 @@ async function tick(){
     const r=await fetch(`/jobs/${JOB}/stats`,{cache:"no-store"});
     if(!r.ok)throw 0;
     const d=await r.json();
+    lastOk=Date.now();
+    document.body.classList.remove("stale");
     $("q").textContent=d.query||"—";
+
+    // progress-to-floor: prefer STATUS.md sub-questions, else substantive-file floor
+    const pr=d.progress||{}, fl=d.floor||{};
+    let pct, label;
+    if(pr.total>0){pct=100*pr.done/pr.total; label=`${pr.done} / ${pr.total} questions answered`;}
+    else{const mf=fl.min_files||100; pct=100*Math.min(1,(fl.substantive_files||0)/mf);
+         label=`${fl.substantive_files||0} / ${mf} sourced files`;}
+    $("pbar").querySelector("i").style.width=Math.min(100,pct)+"%";
+    $("proglabel").textContent=label+(fl.summary_exists?" · SUMMARY.md ✓":" · SUMMARY.md pending");
+    $("subfiles").textContent=fl.substantive_files||0;
+    $("minfiles").textContent=fl.min_files||0;
+
+    // context
     const c=d.context||{};
     $("ctxpct").textContent=c.percent??0;
     $("ctxtok").textContent=(c.tokens||0).toLocaleString();
     $("ctxwin").textContent=(c.window||0).toLocaleString();
     const bar=$("ctxbar");bar.querySelector("i").style.width=Math.min(100,c.percent||0)+"%";
     bar.classList.toggle("warn",(c.percent||0)>=80);
+
+    // throughput (show "-" when metrics are down rather than a misleading 0)
     const tps=d.tps||{};
-    $("tps").textContent=(tps.decode!=null?tps.decode:0);
-    $("pps").textContent=(tps.prefill!=null?tps.prefill:0);
+    $("tps").textContent=(tps.decode!=null?tps.decode:"-");
+    $("pps").textContent=(tps.prefill!=null?tps.prefill:"-");
     $("gen").innerHTML=c.processing?'<span class="dot on blink"></span>generating':'';
+
     $("toolN").textContent=d.tool_calls||0;
     $("turns").textContent=d.turns||0;
-    let cst=(d.usage&&d.usage.cost);if(cst&&typeof cst==="object")cst=cst.total;
-    $("cost").textContent=(cst||0).toFixed(4);
     const dr=d.dataroom||{};
     $("size").textContent=human(dr.size_bytes||0);
     $("files").textContent=dr.file_count||0;
-    // distribution
+
+    // distribution (mcp calls already split into mcp:<inner> server-side)
     const dist=d.tool_distribution||{};const ks=Object.keys(dist);
     const max=Math.max(1,...Object.values(dist));
     $("dist").innerHTML=ks.length?ks.map(k=>
-      `<div class="row"><span class="name">${k}</span>
+      `<div class="row"><span class="name">${esc(k)}</span>
        <span class="track"><i style="width:${100*dist[k]/max}%"></i></span>
-       <span class="n">${dist[k]}</span></div>`).join(""):'<div class="sub">no calls yet</div>';
+       <span class="n">${dist[k]}</span></div>`).join(""):'<div class="empty">no calls yet</div>';
+
+    // activity feed (newest at bottom; current row highlighted)
+    const rec=d.recent||[];
+    $("feed").innerHTML=rec.length?rec.map((e,i)=>
+      `<li class="${i===rec.length-1?'live':''}"><span class="t">t${e.turn||0}</span>
+       <span class="v">${i===rec.length-1?'<span class="dot on blink"></span>':''}${esc(e.tool==='say'?'· '+e.text:e.text)}</span></li>`
+      ).join(""):'<li class="empty">waiting for the agent…</li>';
+    const fe=$("feed");fe.scrollTop=fe.scrollHeight;
+
+    // warnings / errors
+    const errs=d.errors||[];
+    $("errN").textContent=errs.length?`(${errs.length})`:"";
+    $("errs").innerHTML=errs.length?errs.slice(-30).map(e=>
+      `<li><span class="g">!</span>${e.turn!=null?`[turn ${e.turn}] `:''}${esc(e.tool)} — ${esc(e.text)}</li>`
+      ).join(""):'<li class="empty" style="border:none;padding-left:0">no errors</li>';
+
     // tree
     $("tree").innerHTML=dr.tree?renderTree(dr.tree):"—";
+
+    // stop-reason banner
+    const ban=$("banner");
+    if(d.stop_reason&&STOP[d.stop_reason]){
+      const[kind,txt]=STOP[d.stop_reason];
+      ban.style.display="block";
+      ban.style.borderLeftStyle=kind==="done"?"solid":kind==="err"?"double":"dashed";
+      ban.innerHTML=`<b>${esc(txt)}</b>`;
+    }else{ban.style.display="none";}
+
     setStatus(d.job_status,d.done);
+
+    // download: gate on zip existence, label partial unless a clean DONE
     const dl=$("dl");
-    if(d.done){dl.removeAttribute("disabled");dl.href=`/jobs/${JOB}/result`;}
-    else{dl.setAttribute("disabled","");dl.href="javascript:void 0";}
+    if(d.zip_ready){dl.removeAttribute("disabled");dl.href=`/jobs/${JOB}/result`;
+      dl.textContent=d.done?"download dataroom.zip":"download dataroom.zip (partial)";}
+    else{dl.setAttribute("disabled","");dl.href="javascript:void 0";
+      dl.textContent="download dataroom.zip";}
     $("ts").textContent=new Date().toLocaleTimeString();
-  }catch(e){setStatus("unknown",false);}
+  }catch(e){
+    // staleness: dim vitals if we have not had a good poll in >2 intervals
+    if(Date.now()-lastOk>7000){document.body.classList.add("stale");setStatus("stale",false);}
+  }
 }
 tick();setInterval(tick,3000);
 </script>
