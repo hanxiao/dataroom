@@ -21,13 +21,17 @@ MIN_FILE_BYTES = int(os.environ.get("MIN_FILE_BYTES", "500"))
 
 
 # --- outcome floor -----------------------------------------------------------
-def floor_metrics(dataroom: Path) -> dict:
+def floor_metrics(dataroom: Path, min_files: int = None) -> dict:
     """Measurable, hard-to-game completion floor.
 
     A "substantive" file is a note under topics/ or reports/ that is non-trivial AND
     carries a `## Sources` section (i.e. evidence-backed, not scaffolding). Raw file_count
     is deliberately NOT used: it counts STATUS/OUTLINE/CONTRACT and stub files.
+
+    min_files defaults to the MIN_FILES env (100); a per-job value (the homepage "budget")
+    overrides it.
     """
+    mf = int(min_files) if min_files else MIN_FILES
     substantive = 0
     if dataroom.exists():
         for sub in ("topics", "reports"):
@@ -46,12 +50,12 @@ def floor_metrics(dataroom: Path) -> dict:
     summary = dataroom / "reports" / "SUMMARY.md"
     summary_exists = summary.exists() and summary.stat().st_size > 200
     open_q = _status_progress(dataroom)["open"]
-    floor_met = (substantive >= MIN_FILES) and summary_exists and (open_q == 0)
+    floor_met = (substantive >= mf) and summary_exists and (open_q == 0)
     return {
         "substantive_files": substantive,
         "summary_exists": bool(summary_exists),
         "open_questions": open_q,
-        "min_files": MIN_FILES,
+        "min_files": mf,
         "floor_met": bool(floor_met),
     }
 
@@ -322,7 +326,7 @@ def parse_pi_log(log_path: Path, job_dir: Path) -> dict:
     }
 
 
-def job_stats(job_dir: Path) -> dict:
+def job_stats(job_dir: Path, min_files: int = None) -> dict:
     dataroom = job_dir / "dataroom"
     tree, size = _walk_tree(dataroom)
     log = parse_pi_log(job_dir / "pi.log", job_dir)
@@ -334,7 +338,7 @@ def job_stats(job_dir: Path) -> dict:
     if sp.exists():
         status = sp.read_text(errors="ignore")
 
-    floor = floor_metrics(dataroom)
+    floor = floor_metrics(dataroom, min_files)
     progress = _status_progress(dataroom)
 
     # stop_reason + done come from run_meta.json (written by the orchestrator at the end).

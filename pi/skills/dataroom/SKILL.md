@@ -32,7 +32,8 @@ comprehensive (or you are told to stop). Quality and coverage over speed.
 - **`dataroom_index`** — semantic index over the dataroom (jina-embeddings-v5-nano).
   `dataroom_index({args:'{"op":"search","query":"...","k":5}'})` etc. (see below).
 - **`read` / `write` / `edit` / `bash`** — you also write code, run it to verify a claim or
-  compute something, and produce charts/plots. Save artifacts into the dataroom.
+  compute something, and build comparison tables and diagrams. Use `read` + `edit` to ENRICH
+  notes you already wrote, not just `write` to add new ones. Save artifacts into the dataroom.
 
 ## The dataroom layout (a sensible default under `dataroom/` — adapt as the topic needs)
 
@@ -48,7 +49,7 @@ dataroom/
   topics/            # one markdown file per sub-topic; the substance
   sources/           # raw captured source material (cleaned markdown from `jina read`)
   data/              # datasets, csv/json you extracted
-  figures/           # plots/charts and images you saved (with script/source for each)
+  figures/           # text visuals: markdown tables, ```mermaid``` diagrams, ascii charts (no matplotlib)
   reports/           # synthesized write-ups, summaries, comparisons
   REJECTED.md        # sources you discarded + the reason (so you never re-chase dead ends)
 ```
@@ -68,21 +69,21 @@ Every substantive note ends with a `## Sources` section listing URLs.
 2. **Pick the highest-value open question** (80/20: the gap that most improves coverage).
 3. **Research it**: `jina search` for sources, `jina read` the best ones into `dataroom/sources/`
    (fan out with `xargs -P` when there are several).
-4. **Before writing a note, DEDUP**: `dataroom_index({args:'{"op":"search","query":"<the fact/topic>","k":5}'})`.
-   - If the result has `duplicate:true` (or a top hit at/above `dup_threshold`), `edit` that
-     file to enrich it instead of creating a new one.
-   - Otherwise create/append the right `topics/` file. The index self-reconciles from disk on
-     every search, so a written file is found next time even if you do nothing else; calling
-     `dataroom_index({args:'{"op":"add","path":"dataroom/topics/x.md","text":"<content>"}'})`
-     right after writing just makes it searchable immediately (optional fast-path).
-5. **Verify when it matters**: write/run small scripts (`bash`, Python) to check numbers,
-   compute aggregates, or make a figure. Save figure + script under `dataroom/figures/`.
+4. **Before writing, SEARCH the index and act on what you find** — `dataroom_index({args:'{"op":"search","query":"<the fact/topic>","k":5}'})`:
+   - `duplicate:true` (top hit at/above `dup_threshold`) -> **`read` that file, then `edit` it to merge the new material in.** Do not create a near-duplicate.
+   - A **related** hit on the same sub-topic (high score, just below the threshold) -> `read` it first; if your new material belongs there, **`edit`/append to it** rather than starting a new file.
+   - Only genuinely new material gets a new `topics/` file.
+   Default to **enriching an existing note over creating a new one** - a few rich, well-structured files beat many thin overlapping ones. (The index self-reconciles from disk, so a written file is searchable next turn; `op=add` right after writing is an optional fast-path to make it searchable immediately.)
+5. **Verify and visualize.** Write/run small scripts (`bash`, Python) to check numbers or compute aggregates. For visuals use TEXT formats that need no extra libraries and render anywhere (matplotlib is NOT installed): comparison matrices as **markdown tables**, architectures / flows / timelines as **Mermaid** (```mermaid``` blocks), simple distributions as **ascii bar charts**. Embed them in the relevant `topics/`/`reports/` note and/or save a standalone diagram under `figures/` (e.g. `figures/qdrant-vs-milvus.md`) referenced from the note. A comparison-heavy dataroom should ship at least a few tables/diagrams.
 6. **Update STATUS.md**: mark the question done, add any new questions you discovered.
 7. **Keep OUTLINE.md current** so the dataroom always has a clear structure.
 
 ## Discipline (this is what "有章法" means)
 
 - Never add content without searching the index first. No duplicates.
+- **Prefer enriching existing files over adding new ones.** Every several turns, scan
+  `op=outline`; if two files cover the same sub-topic, `read` both and merge into one, then
+  remove the redundant file (the index drops it on the next search). Consolidate, don't sprawl.
 - One topic per file; cross-link related files. Keep filenames descriptive and stable.
 - Cite sources for every claim. No unsourced assertions.
 - Distinguish fact vs. inference vs. open question.

@@ -89,9 +89,11 @@ class JobReq(BaseModel):
     query: str
     max_turns: int | None = None
     max_seconds: int | None = None
+    min_files: int | None = None         # outcome-floor "budget": files before it may stop
 
 
-def _run(job_id: str, query: str, max_turns: int | None, max_seconds: int | None):
+def _run(job_id: str, query: str, max_turns: int | None, max_seconds: int | None,
+         min_files: int | None):
     job_dir = JOBS / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
     (job_dir / "query.txt").write_text(query)
@@ -101,12 +103,16 @@ def _run(job_id: str, query: str, max_turns: int | None, max_seconds: int | None
         cmd += ["--max-turns", str(max_turns)]
     if max_seconds:
         cmd += ["--max-seconds", str(max_seconds)]
+    # The orchestrator + floor read MIN_FILES from the environment; override it per job.
+    env = dict(os.environ)
+    if min_files:
+        env["MIN_FILES"] = str(int(min_files))
     with _lock:
         _jobs[job_id]["status"] = "running"
         _jobs[job_id]["started"] = time.time()
     _save_meta(job_id)
     log = open(job_dir / "orchestrator.log", "a")
-    rc = subprocess.call(cmd, cwd=str(HERE.parent), stdout=log, stderr=subprocess.STDOUT)
+    rc = subprocess.call(cmd, cwd=str(HERE.parent), env=env, stdout=log, stderr=subprocess.STDOUT)
     status, stop_reason = _status_for(job_dir, rc)
     with _lock:
         _jobs[job_id]["status"] = status
@@ -126,12 +132,13 @@ def create(req: JobReq):
     if not req.query.strip():
         raise HTTPException(400, "query required")
     job_id = uuid.uuid4().hex[:12]
+    mf = int(req.min_files) if req.min_files and req.min_files > 0 else None
     with _lock:
-        _jobs[job_id] = {"status": "queued", "query": req.query}
+        _jobs[job_id] = {"status": "queued", "query": req.query, "min_files": mf}
     (JOBS / job_id).mkdir(parents=True, exist_ok=True)
     _save_meta(job_id)
     t = threading.Thread(target=_run, args=(job_id, req.query, req.max_turns,
-                                            req.max_seconds), daemon=True)
+                                            req.max_seconds, mf), daemon=True)
     t.start()
     return {"job_id": job_id, "status": "queued"}
 
@@ -157,7 +164,7 @@ def list_jobs():
             meta = disk or meta
         job_dir = JOBS / jid
         dataroom = job_dir / "dataroom"
-        fm = floor_metrics(dataroom)
+        fm = floor_metrics(dataroom, meta.get("min_files"))
         pr = _status_progress(dataroom)
         fc = (sum(1 for p in dataroom.rglob("*")
                   if p.is_file() and not p.name.startswith(".index")) if dataroom.exists() else 0)
@@ -261,7 +268,7 @@ def stats_ep(job_id: str):
         meta = dict(_jobs.get(job_id, {}))
     if not meta:
         meta = _load_meta(job_id)   # recover after app restart
-    s = job_stats(job_dir)
+    s = job_stats(job_dir, meta.get("min_files"))
     s["job_id"] = job_id
     s["job_status"] = meta.get("status") or ("done" if (job_dir / "dataroom.zip").exists() else "unknown")
     query = meta.get("query", "")

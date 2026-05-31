@@ -19,6 +19,11 @@
   .btn{margin-top:10px;border:1px solid var(--line);background:var(--fg);color:var(--bg);
     padding:8px 16px;cursor:pointer;font:inherit}
   .btn:disabled{opacity:.4;cursor:not-allowed}
+  .ctl{display:flex;align-items:center;gap:14px;margin-top:10px;flex-wrap:wrap}
+  .ctl .btn{margin-top:0}
+  .ctl label{font-size:12px;color:var(--mut);display:flex;align-items:center;gap:6px}
+  .ctl input{width:80px;background:var(--bg);color:var(--fg);border:1px solid var(--line);
+    padding:7px 8px;font:inherit}
   .out{margin-top:16px;color:var(--mut)}
   a{color:inherit}
   /* jobs list */
@@ -51,7 +56,10 @@
   <p>Give a query. An autonomous Pi + self-hosted Qwen3.6 harness crawls, researches, and
      builds a structured dataroom until it is comprehensive. Async — live dashboard + zip.</p>
   <textarea id="q" placeholder="e.g. Competitive landscape of self-hosted small embedding models in 2026"></textarea>
-  <div><button class="btn" id="go">Start research</button></div>
+  <div class="ctl">
+    <button class="btn" id="go">Start research</button>
+    <label title="The dataroom must reach this many substantive, sourced files before the run is allowed to stop (the outcome floor). Time / turn caps are only safety backstops.">budget&nbsp;<input type="number" id="budget" value="100" min="1" step="10">&nbsp;files</label>
+  </div>
   <div class="out" id="out"></div>
 
   <div class="jobs-h">
@@ -71,8 +79,11 @@ go.onclick=async()=>{
   if(!query){$("out").textContent="enter a research query first.";return;}
   go.disabled=true;$("out").textContent="submitting…";
   try{
+    const budget=parseInt($("budget").value,10);
+    const body={query};
+    if(budget>0)body.min_files=budget;
     const r=await fetch("/jobs",{method:"POST",headers:{"content-type":"application/json"},
-      body:JSON.stringify({query})});
+      body:JSON.stringify(body)});
     if(!r.ok){throw new Error("HTTP "+r.status+" "+(await r.text()).slice(0,200));}
     const d=await r.json();
     if(d.job_id){location.href=`/jobs/${d.job_id}/dashboard`;return;}
