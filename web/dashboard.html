@@ -71,9 +71,21 @@
     overflow:hidden;text-overflow:ellipsis}
   .errs li .g{font-weight:700;margin-right:6px}
   .empty{color:var(--mut);font-size:11px}
-  pre.tree{margin:0;white-space:pre;overflow:auto;max-height:min(55vh,620px);font-size:12px}
+  pre.tree{margin:0;white-space:pre;overflow:auto;max-height:min(62vh,760px);font-size:12px}
   .tree .d{font-weight:600}
   .tree .s{color:var(--mut)}
+  .tree .f{cursor:pointer;text-decoration:underline;text-underline-offset:2px;text-decoration-thickness:1px}
+  .tree .f:hover{background:var(--soft)}
+  .tree .f.sel{background:var(--fill);color:var(--bg)}
+  /* split tree | preview */
+  .split{display:grid;grid-template-columns:minmax(260px,38%) 1fr;gap:0;padding:0}
+  .treecol{padding:14px 16px;border-right:1px solid var(--line);min-width:0}
+  .prevcol{padding:14px 16px;min-width:0;overflow:hidden}
+  .prev{margin-top:6px;max-height:min(62vh,760px);overflow:auto}
+  .prev pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;line-height:1.5}
+  .prev img{max-width:100%;height:auto;border:1px solid var(--line)}
+  @media(max-width:760px){.split{grid-template-columns:1fr}
+    .treecol{border-right:none;border-bottom:1px solid var(--line)}}
   .foot{display:flex;justify-content:space-between;color:var(--mut);font-size:11px;padding-top:12px}
   .btn{border:1px solid var(--line);background:var(--bg);color:var(--fg);
     padding:6px 12px;cursor:pointer;font:inherit;text-decoration:none}
@@ -132,9 +144,15 @@
     <ul class="feed" id="feed"><li class="empty">waiting for the agent…</li></ul>
   </div>
 
-  <div class="panel">
-    <div class="k">Dataroom file tree</div>
-    <pre class="tree" id="tree">—</pre>
+  <div class="panel split">
+    <div class="treecol">
+      <div class="k">Dataroom file tree</div>
+      <pre class="tree" id="tree">—</pre>
+    </div>
+    <div class="prevcol">
+      <div class="k">Preview <span id="prevname" class="sub" style="margin:0;text-transform:none;letter-spacing:0"></span></div>
+      <div class="prev" id="prev"><div class="empty">click a file in the tree to preview it</div></div>
+    </div>
   </div>
 
   <div class="foot">
@@ -153,26 +171,71 @@ function human(b){
   const u=["KB","MB","GB"];let i=-1;do{b/=1024;i++}while(b>=1024&&i<2);
   return b.toFixed(b<10?1:0)+" "+u[i];
 }
-function renderTree(node,prefix="",isLast=true,root=true){
+function renderTree(node,prefix="",isLast=true,root=true,path=""){
   let out="";
   if(root){
-    out+=`<span class="d">${node.name}/</span>\n`;
+    out+=`<span class="d">${esc(node.name)}/</span>\n`;
     const ch=node.children||[];
-    ch.forEach((c,i)=>out+=renderTree(c,"",i===ch.length-1,false));
+    ch.forEach((c,i)=>out+=renderTree(c,"",i===ch.length-1,false,c.name));
     return out;
   }
   const branch=isLast?"└─ ":"├─ ";
   if(node.type==="dir"){
-    out+=`${prefix}${branch}<span class="d">${node.name}/</span>\n`;
+    out+=`${prefix}${branch}<span class="d">${esc(node.name)}/</span>\n`;
     const ch=node.children||[];
     const np=prefix+(isLast?"   ":"│  ");
-    ch.forEach((c,i)=>out+=renderTree(c,i===ch.length-1?np:np,i===ch.length-1,false));
+    ch.forEach((c,i)=>out+=renderTree(c,np,i===ch.length-1,false,path+"/"+c.name));
   }else{
-    out+=`${prefix}${branch}${node.name} <span class="s">(${human(node.size)})</span>\n`;
+    out+=`${prefix}${branch}<span class="f" data-path="${esc(path)}">${esc(node.name)}</span> <span class="s">(${human(node.size)})</span>\n`;
   }
   return out;
 }
 function esc(s){return String(s==null?"":s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));}
+
+// ---- file preview ----
+let selPath=null, selImg=false, lastPrevText=null, lastTreeHtml=null;
+const IMG_EXT=["png","jpg","jpeg","gif","svg","webp"];
+function applyTreeSelection(){
+  if(!selPath)return;
+  document.querySelectorAll("#tree .f").forEach(el=>{
+    el.classList.toggle("sel", el.getAttribute("data-path")===selPath);
+  });
+}
+async function loadPreview(path){
+  selPath=path;
+  selImg=IMG_EXT.includes((path.split(".").pop()||"").toLowerCase());
+  lastPrevText=null;
+  $("prevname").textContent=path;
+  applyTreeSelection();
+  const url=`/jobs/${JOB}/file?path=${encodeURIComponent(path)}`;
+  if(selImg){$("prev").innerHTML=`<img src="${url}" alt="${esc(path)}">`;return;}
+  $("prev").innerHTML='<div class="empty">loading…</div>';
+  try{
+    const r=await fetch(url,{cache:"no-store"});
+    if(!r.ok)throw new Error("HTTP "+r.status);
+    const t=await r.text();
+    lastPrevText=t;
+    $("prev").innerHTML=`<pre>${esc(t)}</pre>`;
+  }catch(e){$("prev").innerHTML=`<div class="empty">could not load: ${esc(e.message||e)}</div>`;}
+}
+// live-update the open text file as the agent edits it (preserve scroll, skip if unchanged)
+async function refreshPreview(){
+  if(!selPath||selImg)return;
+  try{
+    const r=await fetch(`/jobs/${JOB}/file?path=${encodeURIComponent(selPath)}`,{cache:"no-store"});
+    if(!r.ok)return;
+    const t=await r.text();
+    if(t===lastPrevText)return;
+    lastPrevText=t;
+    const box=$("prev"), top=box.scrollTop;
+    box.innerHTML=`<pre>${esc(t)}</pre>`;
+    box.scrollTop=top;
+  }catch(e){}
+}
+$("tree").addEventListener("click",e=>{
+  const f=e.target.closest(".f"); if(!f)return;
+  loadPreview(f.getAttribute("data-path"));
+});
 
 // stop_reason -> [kind, label]. kind drives the left border emphasis (no color).
 const STOP={
@@ -258,7 +321,9 @@ async function tick(){
       ).join(""):'<li class="empty" style="border:none;padding-left:0">no errors</li>';
 
     // tree
-    $("tree").innerHTML=dr.tree?renderTree(dr.tree):"—";
+    const th=dr.tree?renderTree(dr.tree):"—";
+    if(th!==lastTreeHtml){lastTreeHtml=th;$("tree").innerHTML=th;applyTreeSelection();}
+    refreshPreview();
 
     // stop-reason banner
     const ban=$("banner");

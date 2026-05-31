@@ -221,6 +221,37 @@ def snapshot(job_id: str):
                     headers={"Content-Disposition": f'attachment; filename="{fn}"'})
 
 
+_IMG = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+        ".gif": "image/gif", ".svg": "image/svg+xml", ".webp": "image/webp"}
+
+
+@app.get("/jobs/{job_id}/file")
+def get_file(job_id: str, path: str):
+    """Return one dataroom file's content for the dashboard preview pane.
+
+    `path` is relative to the job's dataroom dir. Resolved + guarded against traversal
+    outside the dataroom. Images are served with their media type; everything else as text."""
+    dataroom = (JOBS / job_id / "dataroom").resolve()
+    if not dataroom.exists():
+        raise HTTPException(404, "no dataroom")
+    target = (dataroom / path).resolve()
+    try:
+        target.relative_to(dataroom)                 # traversal guard
+    except ValueError:
+        raise HTTPException(403, "outside dataroom")
+    if not target.is_file() or target.name.startswith(".index"):
+        raise HTTPException(404, "not found")
+    ext = target.suffix.lower()
+    if ext in _IMG:
+        return FileResponse(str(target), media_type=_IMG[ext])
+    try:
+        data = target.read_text(errors="ignore")
+    except Exception:
+        raise HTTPException(415, "not previewable (binary)")
+    # cap very large files so the preview stays snappy
+    return PlainTextResponse(data[:500000])
+
+
 @app.get("/jobs/{job_id}/stats")
 def stats_ep(job_id: str):
     job_dir = JOBS / job_id
