@@ -56,6 +56,9 @@ services:
       -fitt 512
 
   daas:
+    # Prebuilt image (default): `docker compose pull` fetches it. To build from source instead,
+    # `docker compose up -d --build` builds `.` and tags it under this same name.
+    image: ${DAAS_IMAGE:-ghcr.io/hanxiao/dataroom-as-a-service:latest}
     build: .
     container_name: daas-app
     ports:

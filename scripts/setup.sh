@@ -110,8 +110,15 @@ else
   echo "Model already present."
 fi
 
-echo "=== Building + starting services ==="
-sudo docker compose up -d --build
+# DAAS_PULL=1 -> use the prebuilt app image from GHCR (fast, no local build); else build from source.
+if [ "${DAAS_PULL:-}" = "1" ]; then
+  echo "=== Pulling prebuilt images + starting services ==="
+  sudo docker compose pull
+  sudo docker compose up -d
+else
+  echo "=== Building + starting services ==="
+  sudo docker compose up -d --build
+fi
 
 echo "=== Waiting for llama-server (loads ~22GB from disk on first run) ==="
 llama_ready=

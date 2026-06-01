@@ -45,25 +45,36 @@ The [live dashboard](https://dataroom.hanxiao.io) for a finished job - progress-
 
 ## Get Started
 
-Simplest path on an NVIDIA Docker host. `scripts/setup.sh` installs Docker and the NVIDIA container toolkit, downloads the model, builds both images, and brings the stack up.
+An NVIDIA Docker host runs two containers (llama-server + the app). `scripts/setup.sh` installs Docker + the NVIDIA toolkit, downloads the model, and brings the stack up. The only value you must set is `JINA_API_KEY`; everything else in `.env.example` ships with working defaults.
+
+Clone and set the key once:
 
 ```bash
-# 0. (optional) confirm the GPU is visible to the host first
-nvidia-smi
-
-# 1. clone
 git clone https://github.com/hanxiao/dataroom-as-a-service.git
 cd dataroom-as-a-service
-
-# 2. set ONLY the Jina key (replace jina_your_real_key)
 cp .env.example .env
 sed -i 's/^JINA_API_KEY=.*/JINA_API_KEY=jina_your_real_key/' .env
+```
 
-# 3. one-shot: Docker + NVIDIA toolkit + ~22GB model download + build + up + health wait
+### Option A: prebuilt image (fastest)
+
+Pull the published app image from GHCR instead of building it locally (skips the ~14GB build). `setup.sh` still installs Docker + the toolkit and downloads the model, then pulls + starts the stack:
+
+```bash
+DAAS_PULL=1 bash scripts/setup.sh
+```
+
+Pulls `ghcr.io/hanxiao/dataroom-as-a-service:latest`. The package is public; if you've made it private, `docker login ghcr.io` first.
+
+### Option B: build from source
+
+Build the app image locally (no pull). Same one-shot, just slower the first time:
+
+```bash
 bash scripts/setup.sh
 ```
 
-Three steps: clone, set key, `bash scripts/setup.sh`. When it finishes it prints the API URL. The only value you must set is `JINA_API_KEY`; everything else in `.env.example` ships with working defaults.
+Either way, when it finishes it prints the API URL.
 
 Prereqs:
 - An NVIDIA GPU with the driver installed (`nvidia-smi` must work) and the `nvidia-container-toolkit`. `setup.sh` installs the toolkit on Debian/Ubuntu hosts; on RHEL-family hosts install it yourself first. The llama-server needs the GPU; the app's v5-nano embedder runs on CPU by default (`EMBED_DEVICE=cpu`) to leave VRAM for the Q4 model (set `EMBED_DEVICE=cuda` to move it onto the GPU).
