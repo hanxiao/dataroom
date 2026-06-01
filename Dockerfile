@@ -41,6 +41,7 @@ COPY server ./server
 COPY pi ./pi
 COPY templates ./templates
 COPY web ./web
+COPY assets ./assets
 
 # Pre-bake the v5-nano weights into the image (CPU download at build time; no GPU needed
 # during build) so the first job starts fast and the deploy is reproducible.

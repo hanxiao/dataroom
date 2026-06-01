@@ -452,6 +452,22 @@ def index():
     return HTMLResponse((WEB / "index.html").read_text())
 
 
+@app.get("/favicon.svg")
+def favicon_svg():
+    return FileResponse(str(WEB / "favicon.svg"), media_type="image/svg+xml")
+
+
+@app.get("/favicon.ico")
+def favicon_ico():
+    # No .ico asset; serve the SVG (modern browsers accept it) so the auto-request isn't a 404.
+    return FileResponse(str(WEB / "favicon.svg"), media_type="image/svg+xml")
+
+
+@app.get("/og.png")
+def og_image():
+    return FileResponse(str(HERE.parent / "assets" / "banner.png"), media_type="image/png")
+
+
 @app.get("/jobs/{job_id}/log")
 def joblog(job_id: str):
     p = JOBS / job_id / "pi.log"
