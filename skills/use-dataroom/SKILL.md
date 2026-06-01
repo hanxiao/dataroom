@@ -10,7 +10,7 @@ reads the web and assembles a structured, fully-cited **dataroom** on disk (topi
 reports, a SUMMARY). You commission a job, wait, then download the dataroom as a `.zip` and
 unzip it locally. Treat it like handing a research task to an intern for a fixed amount of time.
 
-**Endpoint (default):** `https://dataroom.hanxiao.io` — override `BASE` for your own deployment.
+**Endpoint (default):** `https://dataroom.hanxiao.io` (override `BASE` for your own deployment).
 
 ## Budget: time, in minutes
 

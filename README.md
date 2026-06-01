@@ -93,7 +93,7 @@ Non-Qwen caveat: switching to a non-Qwen GGUF is not just a filename swap. The b
 
 ## Skill & API usage
 
-### Skill — drive it from another agent
+### Skill (drive it from another agent)
 
 Another LLM/agent can commission a dataroom from a deployed instance with the `use-dataroom` skill ([`skills/use-dataroom/SKILL.md`](skills/use-dataroom/SKILL.md)): submit a query with a **minutes time-box** (like handing an intern a time-boxed task), poll until it finishes, then download and unzip the result. One-shot:
 
