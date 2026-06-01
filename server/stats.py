@@ -266,7 +266,7 @@ def _iter_events(log_path: Path):
                 continue
 
 
-def parse_pi_log(log_path: Path, job_dir: Path) -> dict:
+def parse_pi_log(log_path: Path, job_dir: Path, live: bool = False) -> dict:
     tool_counts: dict = {}
     tool_calls = 0
     last_usage = None
@@ -332,7 +332,10 @@ def parse_pi_log(log_path: Path, job_dir: Path) -> dict:
     pi_tokens = 0
     if last_usage:
         pi_tokens = int(last_usage.get("total") or last_usage.get("totalTokens") or 0)
-    kv = llama_kv()
+    # llama /slots + metrics are GLOBAL to the one shared llama-server, so they reflect THIS job
+    # only while it is the actively-running one (single-worker queue). For queued/done/paused jobs
+    # use the job's own last usage, so a fresh job reads 0 instead of bleeding the prior job's numbers.
+    kv = llama_kv() if live else {}
     window = kv.get("window") or CONTEXT_WINDOW
     ctx_tokens = kv.get("tokens") or pi_tokens
     return {
@@ -351,14 +354,14 @@ def parse_pi_log(log_path: Path, job_dir: Path) -> dict:
             "percent": round(100 * ctx_tokens / window, 1) if window else 0,
             "processing": kv.get("processing", False),
         },
-        "tps": llama_tps(),
+        "tps": llama_tps() if live else {},
     }
 
 
-def job_stats(job_dir: Path, min_files: int = None) -> dict:
+def job_stats(job_dir: Path, min_files: int = None, live: bool = False) -> dict:
     dataroom = job_dir / "dataroom"
     tree, size = _walk_tree(dataroom)
-    log = parse_pi_log(job_dir / "pi.log", job_dir)
+    log = parse_pi_log(job_dir / "pi.log", job_dir, live)
     file_count = sum(1 for p in dataroom.rglob("*")
                      if p.is_file() and not p.name.startswith(".index")) if dataroom.exists() else 0
     status = ""

@@ -332,15 +332,23 @@ async function tick(){
     $("q").textContent=d.query||"—";
     const live=d.job_status==="running";   // only this job actively running -> blink live indicators
 
-    // progress-to-floor: prefer STATUS.md sub-questions, else substantive-file floor
-    const pr=d.progress||{}, fl=d.floor||{};
+    // Progress: against the TIME budget when one is set (the intern time-box), else fall back to
+    // the comprehensiveness floor (sub-questions, then substantive files).
+    const b=d.budget||{}, pr=d.progress||{}, fl=d.floor||{};
     let pct, label;
-    if(pr.total>0){pct=100*pr.done/pr.total; label=`${pr.done} / ${pr.total} questions answered`;}
-    else{const mf=fl.min_files||100; pct=100*Math.min(1,(fl.substantive_files||0)/mf);
-         label=`${fl.substantive_files||0} / ${mf} sourced files`;}
+    if(b.max_seconds){
+      pct=b.percent||0;
+      const used=Math.round((b.elapsed_seconds||0)/60), tot=Math.round(b.max_seconds/60);
+      label=`${used} / ${tot} min · ${fl.substantive_files||0} sourced files`;
+    }else if(pr.total>0){
+      pct=100*pr.done/pr.total; label=`${pr.done} / ${pr.total} questions answered`;
+    }else{
+      const mf=fl.min_files||100; pct=100*Math.min(1,(fl.substantive_files||0)/mf);
+      label=`${fl.substantive_files||0} / ${mf} sourced files`;
+    }
     $("pbar").querySelector("i").style.width=Math.min(100,pct)+"%";
     $("progpct").textContent=Math.round(pct);
-    $("proglabel").textContent=label+(fl.summary_exists?" · SUMMARY.md ✓":" · SUMMARY.md pending");
+    $("proglabel").textContent=label+(fl.summary_exists?" · SUMMARY.md ✓":"");
     $("subfiles").textContent=fl.substantive_files||0;
     $("minfiles").textContent=fl.min_files||0;
 

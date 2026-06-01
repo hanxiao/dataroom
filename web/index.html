@@ -202,9 +202,14 @@ function progressText(j){
   return j.status;   // queued / failed
 }
 function miniBar(j){
-  const sub=j.substantive_files||0, min=j.min_files||100;
-  const pr=j.progress||{};
-  let pct = pr.total>0 ? 100*pr.done/pr.total : 100*Math.min(1,sub/min);
+  let pct;
+  if(j.max_seconds){                       // time-box progress: elapsed / budget
+    const elapsed=Math.max(0,(j.finished||Date.now()/1000)-(j.started||Date.now()/1000));
+    pct=100*Math.min(1, elapsed/j.max_seconds);
+  }else{                                    // fall back to comprehensiveness floor
+    const sub=j.substantive_files||0, min=j.min_files||100, pr=j.progress||{};
+    pct = pr.total>0 ? 100*pr.done/pr.total : 100*Math.min(1,sub/min);
+  }
   return `<span class="minibar"><i style="width:${Math.min(100,pct)}%"></i></span>`;
 }
 

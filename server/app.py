@@ -333,6 +333,7 @@ def list_jobs():
             "query": (meta.get("query") or "")[:200],
             "started": meta.get("started"),
             "finished": meta.get("finished"),
+            "max_seconds": meta.get("max_seconds"),
             "substantive_files": fm["substantive_files"],
             "min_files": fm["min_files"],
             "progress": pr,
@@ -426,13 +427,21 @@ def stats_ep(job_id: str):
         meta = dict(_jobs.get(job_id, {}))
     if not meta:
         meta = _load_meta(job_id)   # recover after app restart
-    s = job_stats(job_dir, meta.get("min_files"))
+    status_val = meta.get("status") or ("done" if (job_dir / "dataroom.zip").exists() else "unknown")
+    # live = this job is the one actually running on the shared llama-server (single-worker queue),
+    # so its context/throughput are real; otherwise they'd bleed another job's global llama state.
+    s = job_stats(job_dir, meta.get("min_files"), live=(status_val == "running"))
     s["job_id"] = job_id
-    s["job_status"] = meta.get("status") or ("done" if (job_dir / "dataroom.zip").exists() else "unknown")
+    s["job_status"] = status_val
     # Align the banner's stop_reason with the control-flag-aware status (else a cancelled job can
     # show the orchestrator's generic 'interrupted' banner).
     if meta.get("stop_reason") is not None:
         s["stop_reason"] = meta["stop_reason"]
+    # Time-box progress: elapsed vs the job's max_seconds budget (the homepage/skill set this).
+    started, finished, max_seconds = meta.get("started"), meta.get("finished"), meta.get("max_seconds")
+    elapsed = int((finished or time.time()) - started) if started else 0
+    s["budget"] = {"max_seconds": max_seconds, "elapsed_seconds": max(0, elapsed),
+                   "percent": round(min(100, 100 * elapsed / max_seconds), 1) if max_seconds else None}
     query = meta.get("query", "")
     qf = job_dir / "query.txt"
     if not query and qf.exists():
