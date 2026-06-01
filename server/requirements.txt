@@ -3,7 +3,12 @@ uvicorn
 httpx
 numpy
 pydantic>=2
-sentence-transformers
-peft
+# Pin the ML stack. jina-embeddings-v5's remote code (custom_st.py) is written for transformers
+# 4.x; transformers 5.x removed the `config_class` attribute its custom model relies on, so an
+# unpinned rebuild that pulled 5.x broke the embedder with `AttributeError: ... has no attribute
+# 'config_class'`. Keep these pinned so a rebuild can't silently bump a major and break loading.
+transformers==4.57.6
+sentence-transformers==5.5.1
+peft==0.19.1
 einops
 # torch is provided by the pytorch/pytorch base image; do not pin it here (avoids reinstall).
