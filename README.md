@@ -91,7 +91,33 @@ That is all you change to swap the LLM. The rest are **advanced overrides**, rar
 
 Non-Qwen caveat: switching to a non-Qwen GGUF is not just a filename swap. The bundled chat template is Qwen3.6-specific - point `CHAT_TEMPLATE_FILE` at the new model's Jinja template (a wrong template silently corrupts tool-calling), or drop the flag to use the GGUF's embedded template. `--spec-type draft-mtp` needs a GGUF that ships an MTP draft head (the `...-MTP-GGUF` repo does); for a plain GGUF set `SPEC_ARGS=` (empty). The `CTX_SIZE` default of 131072 is tuned to Qwen3.6's hybrid GDN+MoE KV math; a dense model of similar size uses far more KV per token, so lower `CTX_SIZE` or it may OOM on the L4. Re-measure VRAM with `nvidia-smi` for any other weights. See `docs/DEPLOY.md` for the deeper reproducibility detail.
 
-## API
+## Skill & API usage
+
+### Skill — drive it from another agent
+
+Another LLM/agent can commission a dataroom from a deployed instance with the `use-dataroom` skill ([`skills/use-dataroom/SKILL.md`](skills/use-dataroom/SKILL.md)): submit a query with a **minutes time-box** (like handing an intern a time-boxed task), poll until it finishes, then download and unzip the result. One-shot:
+
+```bash
+BASE="https://dataroom.hanxiao.io"          # the deployed instance
+QUERY="Competitive landscape of self-hosted small embedding models in 2026"
+MINUTES=30                                  # time box: works up to this long, then hands over
+
+JOB=$(curl -s -X POST "$BASE/jobs" -H 'content-type: application/json' \
+  -d "{\"query\": $(python3 -c 'import json,sys;print(json.dumps(sys.argv[1]))' "$QUERY"), \"max_seconds\": $((MINUTES*60))}" \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["job_id"])')
+echo "watch: $BASE/jobs/$JOB/dashboard"
+
+while :; do
+  S=$(curl -s "$BASE/jobs/$JOB" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("status","?"))')
+  case "$S" in done|stopped|failed) break;; esac; sleep 30
+done
+
+curl -s -OJ "$BASE/jobs/$JOB/result" && unzip -oq "dataroom-$JOB.zip" -d "$JOB"   # -> $JOB/dataroom/
+```
+
+`stopped` (time box reached) is a success, not an error - you still get the dataroom built so far. See the skill file for status meanings, partial `/snapshot` downloads, and the full endpoint table.
+
+### API
 
 Once the stack is up, the API is on port 8000 (open, no auth). `{JOB}` is the 12-hex id returned by `POST /jobs`.
 
