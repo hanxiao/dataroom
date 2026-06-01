@@ -109,10 +109,16 @@
     .foot{flex-direction:column;gap:8px;align-items:flex-start}
     header{flex-wrap:wrap;gap:4px}}
   .foot{display:flex;justify-content:space-between;color:var(--mut);font-size:11px;padding-top:12px}
-  .actions{display:flex;gap:8px;flex-wrap:wrap;padding:12px 0;border-bottom:1px solid var(--line)}
+  .actions{display:flex;gap:6px;flex-wrap:wrap;padding:10px 0;border-bottom:1px solid var(--line)}
   .btn{border:1px solid var(--line);background:var(--bg);color:var(--fg);
     padding:6px 12px;cursor:pointer;font:inherit;text-decoration:none}
   .btn[disabled]{opacity:.35;cursor:not-allowed;pointer-events:none}
+  .icon{width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;
+    border:1px solid var(--line);background:var(--bg);color:var(--fg);cursor:pointer;
+    text-decoration:none;padding:0}
+  .icon:hover{background:var(--soft)}
+  .icon[disabled]{opacity:.35;cursor:not-allowed;pointer-events:none}
+  .icon svg{display:block}
 </style>
 </head>
 <body>
@@ -123,10 +129,10 @@
   </header>
 
   <div class="actions">
-    <a class="btn" href="/" title="Back to homepage">← all jobs</a>
-    <a class="btn" id="dl" href="#">download dataroom.zip</a>
-    <button class="btn" id="pauseBtn" style="display:none">pause</button>
-    <button class="btn" id="cancelBtn" style="display:none">cancel</button>
+    <a class="icon" href="/" title="Back to all jobs"><svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3.5L5.5 8l4.5 4.5"/></svg></a>
+    <a class="icon" id="dl" href="#" title="Download dataroom.zip"><svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.5v7"/><path d="M5 6.8l3 3 3-3"/><path d="M3.5 12.5h9"/></svg></a>
+    <button class="icon" id="pauseBtn" style="display:none" title="pause"></button>
+    <button class="icon" id="cancelBtn" style="display:none" title="cancel"><svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
   </div>
 
   <div class="banner" id="banner"></div>
@@ -209,6 +215,14 @@
 const JOB="__JOB_ID__";
 const $=id=>document.getElementById(id);
 let lastOk=0;
+
+// Inline monochrome SVG icons (currentColor, thin strokes - turbopuffer style).
+function ic(n){
+  const a='viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"';
+  if(n==="pause")return `<svg ${a}><path d="M6 3.5v9"/><path d="M10 3.5v9"/></svg>`;
+  if(n==="resume")return `<svg viewBox="0 0 16 16" width="15" height="15" fill="currentColor"><path d="M5 3.4l7.2 4.6L5 12.6z"/></svg>`;
+  return "";
+}
 
 // job controls: pause<->resume toggle + cancel. Re-tick after so the label flips on confirmed status.
 async function post(path){try{await fetch(path,{method:"POST"});}catch(e){}tick();}
@@ -408,14 +422,14 @@ async function tick(){
     const dl=$("dl");
     dl.removeAttribute("disabled");
     dl.href=`/jobs/${JOB}/snapshot`;
-    dl.textContent=d.done?"download dataroom.zip":"download dataroom.zip (so far)";
+    dl.title=d.done?"Download dataroom.zip":"Download dataroom.zip (so far)";
 
-    // pause/resume/cancel for unfinished jobs
+    // pause/resume/cancel for unfinished jobs (icon-only, title tooltips)
     const stt=d.job_status;
     const pb=$("pauseBtn"), cb=$("cancelBtn");
-    if(stt==="paused"){pb.style.display="";pb.textContent="resume";pb.dataset.act="resume";pb.disabled=false;}
-    else if(stt==="pausing"){pb.style.display="";pb.textContent="pausing…";pb.dataset.act="pause";pb.disabled=true;}
-    else if(stt==="running"||stt==="queued"){pb.style.display="";pb.textContent="pause";pb.dataset.act="pause";pb.disabled=false;}
+    if(stt==="paused"){pb.style.display="";pb.innerHTML=ic("resume");pb.title="resume";pb.dataset.act="resume";pb.disabled=false;}
+    else if(stt==="pausing"){pb.style.display="";pb.innerHTML=ic("pause");pb.title="pausing…";pb.dataset.act="pause";pb.disabled=true;}
+    else if(stt==="running"||stt==="queued"){pb.style.display="";pb.innerHTML=ic("pause");pb.title="pause";pb.dataset.act="pause";pb.disabled=false;}
     else{pb.style.display="none";}
     cb.style.display=["running","queued","pausing","paused"].includes(stt)?"":"none";
 

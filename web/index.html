@@ -62,6 +62,7 @@
     line-height:1;text-decoration:none;opacity:.75}
   .icon:hover{opacity:1;background:var(--soft)}
   .icon:disabled{opacity:.3;cursor:default;background:none}
+  .icon svg{display:block}
   .empty{color:var(--mut);font-size:12px;padding:20px 0}
   /* mobile: stack the jobs row so it never overflows a narrow screen */
   @media(max-width:600px){
@@ -131,15 +132,25 @@ go.onclick=async()=>{
 
 const esc=s=>String(s==null?"":s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
 
+// Inline monochrome SVG icons (currentColor, thin strokes - turbopuffer style). Crisp + font-independent.
+function ic(n){
+  const a='viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"';
+  if(n==="download")return `<svg ${a}><path d="M8 2.5v7"/><path d="M5 6.8l3 3 3-3"/><path d="M3.5 12.5h9"/></svg>`;
+  if(n==="pause")return `<svg ${a}><path d="M6 3.5v9"/><path d="M10 3.5v9"/></svg>`;
+  if(n==="resume")return `<svg viewBox="0 0 16 16" width="15" height="15" fill="currentColor"><path d="M5 3.4l7.2 4.6L5 12.6z"/></svg>`;
+  if(n==="cancel")return `<svg ${a}><path d="M4 4l8 8M12 4l-8 8"/></svg>`;
+  return "";
+}
+
 // pause/resume/cancel a job, then refresh the list so the button state flips on confirmed status.
 async function jpost(id,act){try{await fetch(`/jobs/${id}/${act}`,{method:"POST"});}catch(e){}loadJobs();}
 function controlsFor(j){
   const s=j.status, id=j.job_id; let h="";
-  if(s==="paused")h+=`<button class="icon" title="resume" onclick="event.stopPropagation();jpost('${id}','resume')">&#9655;</button>`;
-  else if(s==="running"||s==="queued")h+=`<button class="icon" title="pause" onclick="event.stopPropagation();jpost('${id}','pause')">&#8214;</button>`;
-  else if(s==="pausing")h+=`<button class="icon" title="pausing…" disabled>&#8214;</button>`;
+  if(s==="paused")h+=`<button class="icon" title="resume" onclick="event.stopPropagation();jpost('${id}','resume')">${ic("resume")}</button>`;
+  else if(s==="running"||s==="queued")h+=`<button class="icon" title="pause" onclick="event.stopPropagation();jpost('${id}','pause')">${ic("pause")}</button>`;
+  else if(s==="pausing")h+=`<button class="icon" title="pausing…" disabled>${ic("pause")}</button>`;
   if(["running","queued","pausing","paused"].includes(s))
-    h+=`<button class="icon" title="cancel" onclick="event.stopPropagation();if(confirm('Cancel this job? This cannot be undone.'))jpost('${id}','cancel')">&#10005;</button>`;
+    h+=`<button class="icon" title="cancel" onclick="event.stopPropagation();if(confirm('Cancel this job? This cannot be undone.'))jpost('${id}','cancel')">${ic("cancel")}</button>`;
   return h;
 }
 
@@ -150,8 +161,8 @@ function dotFor(s){
 }
 function progressText(j){
   const fc=j.file_count||0, sub=j.substantive_files||0, min=j.min_files||100;
-  if(j.status==="running")return `${sub}/${min}`;
-  if(j.status==="done"||j.status==="stopped")return `${fc}f`;
+  if(j.status==="running")return `${sub}/${min} files`;
+  if(j.status==="done"||j.status==="stopped")return `${fc} files`;
   return j.status;   // queued / paused / pausing / cancelled / failed / interrupted
 }
 function miniBar(j){
@@ -175,7 +186,7 @@ async function loadJobs(){
           <span class="q" title="${esc(j.query)}">${esc(j.query)||"(no query)"}</span>
           <span class="pg">${(j.status==="running")?miniBar(j)+" ":""}${esc(progressText(j))}</span>
           <span class="acts" onclick="event.stopPropagation()">
-            <a class="icon" href="/jobs/${j.job_id}/snapshot" title="download zip">&#8595;</a>
+            <a class="icon" href="/jobs/${j.job_id}/snapshot" title="download zip">${ic("download")}</a>
             ${controlsFor(j)}
           </span>
         </div>`).join("");
