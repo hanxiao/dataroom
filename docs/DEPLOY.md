@@ -74,10 +74,10 @@ curl -s -OJ localhost:8000/jobs/$JOB/result
   * 256 head_dim * 0.5 byte (q4_0)` ≈ `ctx * 5.12KB`: **~0.08GB at 16384, ~0.65GB at the full
   131072 window**. This is far smaller than a dense 35B's KV - do not size by dense rules; with Q4
   the weights, not the KV, are what fill VRAM.
-- The `v5-nano` embedder runs on the GPU by default (`EMBED_DEVICE=cuda`, ~0.5GB), sharing the
-  L4. With weights ~22GB + KV ~0.65GB + embedder ~0.5GB it is **tight: measured ~22.2GB used at
-  131072, no OOM** but little spare. `-ngl` is left unset (auto-fit) with mmap on so light expert
-  layers can spill to CPU instead of OOMing. **Always confirm with `nvidia-smi`.**
+- The `v5-nano` embedder runs on **CPU** by default (`EMBED_DEVICE=cpu`) so it does not compete
+  for VRAM - with Q4 weights ~22GB nearly filling the L4, keeping the ~0.5GB embedder off-GPU
+  avoids OOM (set `EMBED_DEVICE=cuda` to put it back on GPU if you have headroom). `-ngl` is left
+  unset (auto-fit) with mmap on so light expert layers can spill to CPU. **Confirm with `nvidia-smi`.**
 - If it gets tight, set `EMBED_DEVICE=cpu` (zero VRAM contention), lower `CTX_SIZE`, or use a
   smaller quant. Keep `CTX_SIZE` / `CONTEXT_WINDOW` / the dashboard denominator in sync (the
   default is 131072 everywhere).

@@ -50,7 +50,7 @@ bash scripts/setup.sh
 Three steps: clone, set key, `bash scripts/setup.sh`. When it finishes it prints the API URL. The only value you must set is `JINA_API_KEY`; everything else in `.env.example` ships with working defaults.
 
 Prereqs:
-- An NVIDIA GPU with the driver installed (`nvidia-smi` must work) and the `nvidia-container-toolkit`. `setup.sh` installs the toolkit on Debian/Ubuntu hosts; on RHEL-family hosts install it yourself first. Both containers need the GPU - the app container also uses it for the embedder (`EMBED_DEVICE=cuda`).
+- An NVIDIA GPU with the driver installed (`nvidia-smi` must work) and the `nvidia-container-toolkit`. `setup.sh` installs the toolkit on Debian/Ubuntu hosts; on RHEL-family hosts install it yourself first. The llama-server needs the GPU; the app's v5-nano embedder runs on CPU by default (`EMBED_DEVICE=cpu`) to leave VRAM for the Q4 model (set `EMBED_DEVICE=cuda` to move it onto the GPU).
 - A Jina API key: https://jina.ai/api-dashboard/
 - Disk for a ~22GB model download plus the CUDA + pytorch base images and job data under `./data`. The model download alone can take several minutes on a slow link; it resumes from the Hugging Face cache if interrupted.
 
@@ -128,7 +128,7 @@ flowchart LR
             orch["orchestrator<br/>run_dataroom.py<br/>floor + ceiling guard"]
             pi["Pi coding agent<br/>pi --mode json --continue"]
             jina["jina CLI on PATH<br/>search / read / rerank / embed"]
-            emb["v5-nano embedder<br/>EMBED_DEVICE=cuda ~0.5GB<br/>dataroom_index"]
+            emb["v5-nano embedder<br/>EMBED_DEVICE=cpu (off-GPU)<br/>dataroom_index"]
             disk[("/data/jobs/&lt;id&gt;/<br/>dataroom/ + meta + logs")]
         end
 

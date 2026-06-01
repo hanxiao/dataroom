@@ -66,7 +66,7 @@ services:
       - LLAMA_URL=http://llama-server:8080
       - JOBS_DIR=/data/jobs
       - CONTEXT_WINDOW=${CTX_SIZE:-131072}   # match llama-server --ctx-size (dashboard + compaction)
-      - EMBED_DEVICE=cuda          # v5-nano on GPU (~0.5GB) for speed; set cpu to avoid VRAM use
+      - EMBED_DEVICE=cpu           # v5-nano on CPU: frees ~0.5GB so Q4 (~22GB) doesn't OOM the L4
       - TOKENIZERS_PARALLELISM=false
     deploy:
       resources:
