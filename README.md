@@ -1,6 +1,6 @@
 # Dataroom
 
-Give it a query. A local model in an autonomous [Pi](https://pi.dev) harness loops search-read-write until it has built a comprehensive, fully-cited **dataroom** on disk - a `.zip` you hand to a frontier model for the long-horizon task itself (usually implementation).
+Give it a query. A local model in an autonomous [Pi](https://pi.dev) harness loops search-read-write until it has built a comprehensive, fully-cited **dataroom** on disk - a `.zip` you hand to a frontier model for the long-horizon task itself.
 
 <p align="center">
   <img src="assets/banner.png" width="860"
