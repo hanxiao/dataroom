@@ -4,10 +4,10 @@
 set -e
 cd "$(dirname "$0")/.."
 
-MODEL_REPO="${MODEL_REPO:-unsloth/Qwen3.6-35B-A3B-MTP-GGUF}"
-# MODEL_FILE is SHARED with docker-compose's --model: setup downloads models/$MODEL_FILE
-# and compose serves the same file, so a switch stays in sync. Keep these two in agreement.
-MODEL_FILE="${MODEL_FILE:-Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf}"
+# Single model knob: MODEL=<hf_repo>/<file.gguf>. It drives BOTH the download below and the
+# served gguf (docker-compose --model via ${MODEL_FILE}). MODEL_REPO/MODEL_FILE are DERIVED from
+# it - set them directly only for an advanced override. Default = Qwen3.6 MTP Q4_K_XL.
+MODEL_DEFAULT="unsloth/Qwen3.6-35B-A3B-MTP-GGUF/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf"
 
 # --- Preflight: fail fast BEFORE the long install + 22GB download ----------------
 # The Jina API key powers the agent's web research (jina search / jina read). It is REQUIRED
@@ -39,6 +39,18 @@ if [ -z "$JINA_API_KEY" ] || [ "$JINA_API_KEY" = "jina_xxxx" ]; then
   echo "ERROR: JINA_API_KEY in .env is still the placeholder. Edit .env and set a real key" >&2
   echo "       (free key at https://jina.ai/api-dashboard/), or pass JINA_API_KEY=... inline." >&2
   exit 1
+fi
+
+# Resolve the single MODEL knob (env > .env > default) and derive repo/file for download + serve.
+MODEL="${MODEL:-$(grep -E '^MODEL=' .env | head -n1 | cut -d= -f2-)}"
+MODEL="${MODEL:-$MODEL_DEFAULT}"
+MODEL_REPO="${MODEL_REPO:-${MODEL%/*}}"     # repo = everything before the last "/"
+MODEL_FILE="${MODEL_FILE:-${MODEL##*/}}"    # file = the trailing ".gguf"
+# Persist the derived filename so docker-compose can interpolate ${MODEL_FILE} for --model.
+if grep -q '^MODEL_FILE=' .env; then
+  sed -i "s|^MODEL_FILE=.*|MODEL_FILE=$MODEL_FILE|" .env
+else
+  echo "MODEL_FILE=$MODEL_FILE" >> .env
 fi
 
 # GPU preflight: both containers reserve nvidia GPUs, so a working NVIDIA driver is required.

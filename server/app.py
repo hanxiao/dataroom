@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 """DaaS API: submit a query, get an async job that builds a dataroom, download the zip.
 
-POST /jobs            {query}            -> {job_id}
+POST /jobs            {query}            -> {job_id}   (queued; a single worker runs jobs serially)
+POST /jobs/{id}/pause                     -> pause an unfinished job (queue advances to the next)
+POST /jobs/{id}/resume                    -> re-enqueue a paused job
+POST /jobs/{id}/cancel                    -> cancel an unfinished job (terminal)
 GET  /jobs/{id}                          -> {status, turns, ...}
 GET  /jobs/{id}/result                   -> final dataroom.zip (when status=done)
 GET  /jobs/{id}/snapshot                 -> dataroom-so-far.zip, zipped live (any time)
 GET  /jobs/{id}/log                      -> tail of pi.log
 GET  /health
 """
-import io, json, os, subprocess, sys, threading, uuid, time, zipfile
+import io, json, os, signal, subprocess, sys, threading, uuid, time, zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, Response
@@ -26,6 +29,12 @@ JOBS.mkdir(parents=True, exist_ok=True)
 app = FastAPI(title="Dataroom-as-a-Service")
 _jobs: dict[str, dict] = {}
 _lock = threading.Lock()
+# Single-worker serial queue: the L4 has one llama slot (--parallel 1), so jobs run one at a
+# time. _queue is FIFO of job_ids waiting; the worker skips paused jobs and advances to the next
+# runnable one. _current holds the live orchestrator Popen so pause/cancel can signal it.
+_queue: list[str] = []
+_cond = threading.Condition(_lock)
+_current: dict = {"job_id": None, "proc": None}
 
 
 def _save_meta(job_id: str):
@@ -54,13 +63,16 @@ def _status_for(job_dir, rc=None) -> tuple:
     independently downloadable, so its existence -- not rc -- decides done-vs-failed.
     """
     rmeta = _run_meta(job_dir)
+    sr = rmeta.get("stop_reason")
+    if sr in ("paused", "cancelled"):   # set by the API control flag; survives a restart
+        return sr, sr
     if (job_dir / "dataroom.zip").exists():
         status = "done" if rmeta.get("done") else "stopped"
     elif rc not in (None, 0):
         status = "failed"
     else:
         status = "failed"
-    return status, rmeta.get("stop_reason")
+    return status, sr
 
 
 def _load_meta(job_id: str) -> dict:
@@ -92,34 +104,101 @@ class JobReq(BaseModel):
     min_files: int | None = None         # outcome-floor "budget": files before it may stop
 
 
-def _run(job_id: str, query: str, max_turns: int | None, max_seconds: int | None,
-         min_files: int | None):
+def _run_one(job_id: str):
+    """Run one job to completion in the worker thread. Captures the orchestrator Popen (own
+    process group) so pause/cancel can signal it, and maps the exit to a terminal/paused state."""
     job_dir = JOBS / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
+    with _lock:
+        meta = dict(_jobs.get(job_id, {}))
+    query = meta.get("query", "")
     (job_dir / "query.txt").write_text(query)
-    cmd = [sys.executable, "-m", "server.run_dataroom", "--query", query,
-           "--out", str(job_dir)]
-    if max_turns:
-        cmd += ["--max-turns", str(max_turns)]
-    if max_seconds:
-        cmd += ["--max-seconds", str(max_seconds)]
-    # The orchestrator + floor read MIN_FILES from the environment; override it per job.
+    # Clear any stale control flag from a previous pause/cancel before (re)starting.
+    try:
+        (job_dir / "control").unlink()
+    except FileNotFoundError:
+        pass
+    cmd = [sys.executable, "-m", "server.run_dataroom", "--query", query, "--out", str(job_dir)]
+    if meta.get("max_turns"):
+        cmd += ["--max-turns", str(meta["max_turns"])]
+    if meta.get("max_seconds"):
+        cmd += ["--max-seconds", str(meta["max_seconds"])]
     env = dict(os.environ)
-    if min_files:
-        env["MIN_FILES"] = str(int(min_files))
+    if meta.get("min_files"):
+        env["MIN_FILES"] = str(int(meta["min_files"]))
     with _lock:
         _jobs[job_id]["status"] = "running"
         _jobs[job_id]["started"] = time.time()
     _save_meta(job_id)
     log = open(job_dir / "orchestrator.log", "a")
-    rc = subprocess.call(cmd, cwd=str(HERE.parent), env=env, stdout=log, stderr=subprocess.STDOUT)
-    status, stop_reason = _status_for(job_dir, rc)
+    # start_new_session=True: own process group, so cancel can SIGTERM the whole orchestrator+pi.
+    proc = subprocess.Popen(cmd, cwd=str(HERE.parent), env=env, stdout=log,
+                            stderr=subprocess.STDOUT, start_new_session=True)
     with _lock:
-        _jobs[job_id]["status"] = status
-        _jobs[job_id]["stop_reason"] = stop_reason
+        _current["job_id"], _current["proc"] = job_id, proc
+    rc = proc.wait()
+    # The control flag (if we wrote one) is authoritative over zip-existence for paused/cancelled.
+    ctl = ""
+    try:
+        ctl = (job_dir / "control").read_text(errors="ignore").strip()
+    except Exception:
+        pass
+    with _lock:
+        _current["job_id"], _current["proc"] = None, None
+        if ctl == "pause":
+            _jobs[job_id]["status"], _jobs[job_id]["stop_reason"] = "paused", "paused"
+        elif ctl == "cancel":
+            _jobs[job_id]["status"], _jobs[job_id]["stop_reason"] = "cancelled", "cancelled"
+        else:
+            status, stop_reason = _status_for(job_dir, rc)
+            _jobs[job_id]["status"], _jobs[job_id]["stop_reason"] = status, stop_reason
         _jobs[job_id]["rc"] = rc
         _jobs[job_id]["finished"] = time.time()
     _save_meta(job_id)
+
+
+def _worker():
+    """Serial job runner: pick the oldest queued job, run it, repeat. Paused jobs are not
+    'queued' so they are naturally skipped; resume re-enqueues them."""
+    while True:
+        with _cond:
+            while not any(_jobs.get(j, {}).get("status") == "queued" for j in _queue):
+                _cond.wait()
+            job_id = next(j for j in _queue if _jobs.get(j, {}).get("status") == "queued")
+            _queue.remove(job_id)
+        try:
+            _run_one(job_id)
+        except Exception as e:
+            with _lock:
+                _jobs.setdefault(job_id, {})["status"] = "failed"
+                _jobs[job_id]["error"] = str(e)[:300]
+            _save_meta(job_id)
+        with _cond:
+            _cond.notify_all()
+
+
+_worker_thread = threading.Thread(target=_worker, daemon=True)
+_worker_thread.start()
+
+
+def _recover_queue():
+    """On startup, re-enqueue jobs left 'queued' on disk by a previous app instance (the queue
+    is in-memory). Running jobs are reconciled to 'interrupted' by _load_meta, not re-run."""
+    if not JOBS.exists():
+        return
+    for p in sorted(JOBS.iterdir()):
+        if not p.is_dir():
+            continue
+        m = _load_meta(p.name)
+        if m.get("status") == "queued":
+            with _cond:
+                _jobs[p.name] = m
+                if p.name not in _queue:
+                    _queue.append(p.name)
+                _cond.notify_all()
+
+
+_recover_queue()
 
 
 @app.get("/health")
@@ -133,14 +212,97 @@ def create(req: JobReq):
         raise HTTPException(400, "query required")
     job_id = uuid.uuid4().hex[:12]
     mf = int(req.min_files) if req.min_files and req.min_files > 0 else None
-    with _lock:
-        _jobs[job_id] = {"status": "queued", "query": req.query, "min_files": mf}
+    with _cond:
+        _jobs[job_id] = {"status": "queued", "query": req.query, "min_files": mf,
+                         "max_turns": req.max_turns, "max_seconds": req.max_seconds,
+                         "submitted": time.time()}
+        _queue.append(job_id)
+        _cond.notify_all()           # wake the worker to pick it up (runs when the slot is free)
     (JOBS / job_id).mkdir(parents=True, exist_ok=True)
     _save_meta(job_id)
-    t = threading.Thread(target=_run, args=(job_id, req.query, req.max_turns,
-                                            req.max_seconds, mf), daemon=True)
-    t.start()
     return {"job_id": job_id, "status": "queued"}
+
+
+def _cur_status(job_id: str) -> str | None:
+    with _lock:
+        if job_id in _jobs:
+            return _jobs[job_id].get("status")
+    m = _load_meta(job_id)
+    return m.get("status") if m else None
+
+
+@app.post("/jobs/{job_id}/pause")
+def pause(job_id: str):
+    """Pause an unfinished job. A queued job just leaves the run queue; a running job gets a
+    cooperative 'pause' flag and stops at its next cycle boundary (status -> pausing -> paused).
+    The worker then advances to the next queued job."""
+    st = _cur_status(job_id)
+    if st == "queued":
+        with _cond:
+            _jobs.setdefault(job_id, {}).update({"status": "paused", "stop_reason": "paused"})
+            if job_id in _queue:
+                _queue.remove(job_id)
+        _save_meta(job_id)
+        return {"status": "paused"}
+    if st in ("running", "pausing"):
+        # Flag it (authoritative for the resulting status) AND signal for promptness: a long agent
+        # cycle would otherwise delay the cooperative checkpoint by minutes. SIGTERM -> the
+        # orchestrator's handler unwinds cleanly (reaps pi + index, zips); control=pause -> paused.
+        (JOBS / job_id / "control").write_text("pause")
+        with _lock:
+            if job_id in _jobs:
+                _jobs[job_id]["status"] = "pausing"
+            proc = _current["proc"] if _current["job_id"] == job_id else None
+        if proc is not None:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            except Exception:
+                pass
+        _save_meta(job_id)
+        return {"status": "pausing"}
+    raise HTTPException(409, f"cannot pause a job in state {st}")
+
+
+@app.post("/jobs/{job_id}/resume")
+def resume(job_id: str):
+    """Re-enqueue a paused job. The worker continues it from the on-disk dataroom (a fresh pi
+    session re-reads STATUS.md/OUTLINE and keeps building); it goes to the back of the queue."""
+    st = _cur_status(job_id)
+    if st != "paused":
+        raise HTTPException(409, f"cannot resume a job in state {st}")
+    with _cond:
+        _jobs.setdefault(job_id, {}).update({"status": "queued", "stop_reason": None})
+        if job_id not in _queue:
+            _queue.append(job_id)
+        _cond.notify_all()
+    _save_meta(job_id)
+    return {"status": "queued"}
+
+
+@app.post("/jobs/{job_id}/cancel")
+def cancel(job_id: str):
+    """Cancel an unfinished job (terminal). Queued/paused jobs just leave the queue; a running
+    job gets a 'cancel' flag plus SIGTERM to its process group for a prompt, clean stop."""
+    st = _cur_status(job_id)
+    if st not in ("queued", "running", "pausing", "paused"):
+        raise HTTPException(409, f"cannot cancel a job in state {st}")
+    if st in ("queued", "paused"):
+        with _cond:
+            _jobs.setdefault(job_id, {}).update({"status": "cancelled", "stop_reason": "cancelled"})
+            if job_id in _queue:
+                _queue.remove(job_id)
+        _save_meta(job_id)
+        return {"status": "cancelled"}
+    # running/pausing: flag it (authoritative for the final status) and signal for promptness.
+    (JOBS / job_id / "control").write_text("cancel")
+    with _lock:
+        proc = _current["proc"] if _current["job_id"] == job_id else None
+    if proc is not None:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        except Exception:
+            pass
+    return {"status": "cancelling"}
 
 
 @app.get("/jobs")

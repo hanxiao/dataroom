@@ -262,6 +262,7 @@ def parse_pi_log(log_path: Path, job_dir: Path) -> dict:
     tool_counts: dict = {}
     tool_calls = 0
     last_usage = None
+    tot_in = tot_out = 0   # lifetime tokens summed across every message_end usage
     turns = 0           # orchestrator re-invocations of pi (agent_start)
     steps = 0           # pi's internal agent-loop iterations (turn_start)
     compactions = 0     # times pi auto-compacted its own context (compaction_start)
@@ -306,6 +307,8 @@ def parse_pi_log(log_path: Path, job_dir: Path) -> dict:
                     u = (ev.get("message") or {}).get("usage")
                     if u:
                         last_usage = u
+                        tot_in += int(u.get("input") or u.get("inputTokens") or u.get("promptTokens") or 0)
+                        tot_out += int(u.get("output") or u.get("outputTokens") or u.get("completionTokens") or 0)
                     txt = (ev.get("message") or {}).get("text") or ev.get("text")
                     if txt:
                         recent.append({"turn": turns, "tool": "say", "text": str(txt)[:120]})
@@ -326,6 +329,7 @@ def parse_pi_log(log_path: Path, job_dir: Path) -> dict:
         "steps": steps,
         "compactions": compactions,
         "usage": last_usage or {},
+        "tokens": {"total": tot_in + tot_out, "input": tot_in, "output": tot_out},
         "recent": recent,
         "errors": errors,
         "context": {

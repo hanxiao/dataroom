@@ -298,6 +298,17 @@ def drive_rpc(job_dir: Path, agent_dir: Path, args, dataroom: Path,
             turn += 1
             log.flush()
 
+            # Cooperative pause/cancel: the API writes job_dir/control at the user's request;
+            # we honor it at the cycle boundary (breaks the loop -> finally reaps pi, main reaps
+            # the index sidecar + zips). A SIGTERM (prompt cancel) routes through the same finally.
+            cf = job_dir / "control"
+            if cf.exists():
+                ctl = cf.read_text(errors="ignore").strip()
+                if ctl == "cancel":
+                    stop_reason = "cancelled"; break
+                if ctl == "pause":
+                    stop_reason = "paused"; break
+
             # --- evaluate floor / budget (identical policy to the old per-turn loop) ---
             elapsed = time.time() - start
             fm = floor_metrics(dataroom)
@@ -386,6 +397,10 @@ def main():
         print("ERROR: --max-turns must be >= 1", file=sys.stderr); sys.exit(2)
     if args.max_seconds < 1:
         print("ERROR: --max-seconds must be >= 1", file=sys.stderr); sys.exit(2)
+
+    # SIGTERM (sent by the API for a prompt cancel) -> KeyboardInterrupt so the finally blocks
+    # run: pi is reaped in drive_rpc, the GPU-holding index sidecar is reaped in main below.
+    signal.signal(signal.SIGTERM, lambda *_a: (_ for _ in ()).throw(KeyboardInterrupt()))
 
     min_files = int(os.environ.get("MIN_FILES", "100"))
     sat_window = int(os.environ.get("SATURATION_WINDOW", "3"))

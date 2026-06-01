@@ -41,36 +41,34 @@
   .jobs-h h2{font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;margin:0}
   .jobs-h .ref{color:var(--mut);font-size:11px}
   .jobs{margin-top:4px}
-  .job{display:grid;grid-template-columns:104px minmax(0,1fr) 140px 54px 54px;
-    gap:16px;align-items:center;padding:10px 0;border-bottom:1px solid var(--soft);cursor:pointer}
+  .job{display:flex;align-items:center;gap:12px;padding:9px 4px;
+    border-bottom:1px solid var(--soft);cursor:pointer}
   .job:hover{background:var(--fill)}
-  .jhead{cursor:default;color:var(--mut);font-size:10px;letter-spacing:.06em;
-    text-transform:uppercase;border-bottom:1px solid var(--line)}
-  .jhead:hover{background:transparent}
-  .dot{display:inline-block;width:7px;height:7px;border:1px solid var(--line);margin-right:6px;
+  .dot{display:inline-block;width:7px;height:7px;border:1px solid var(--line);flex:none;
     vertical-align:middle}
   .dot.on{background:var(--fg)}
   .blink{animation:b 1s steps(2) infinite}
   @keyframes b{50%{opacity:.2}}
-  .st{font-size:11px;white-space:nowrap;text-transform:capitalize}
-  .q{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
-  .pg{color:var(--mut);font-size:11px;white-space:nowrap;text-align:right}
-  .bar{text-align:right}
-  .dl{font-size:11px;border:1px solid var(--line);padding:2px 8px;text-decoration:none;white-space:nowrap;text-align:center}
-  .empty{color:var(--mut);font-size:12px;padding:20px 0}
-  .minibar{display:inline-block;width:54px;height:7px;border:1px solid var(--line);
+  .q{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+  .pg{color:var(--mut);font-size:11px;white-space:nowrap;flex:none}
+  .minibar{display:inline-block;width:44px;height:6px;border:1px solid var(--line);
     position:relative;vertical-align:middle}
   .minibar > i{position:absolute;left:0;top:0;bottom:0;background:var(--fg)}
+  /* lean icon actions: dim until the row is hovered (turbopuffer-style restraint) */
+  .acts{display:flex;gap:1px;flex:none;opacity:.4;transition:opacity .12s}
+  .job:hover .acts{opacity:1}
+  .icon{width:26px;height:26px;display:inline-flex;align-items:center;justify-content:center;
+    border:none;background:none;color:var(--fg);cursor:pointer;font:inherit;font-size:14px;
+    line-height:1;text-decoration:none;opacity:.75}
+  .icon:hover{opacity:1;background:var(--soft)}
+  .icon:disabled{opacity:.3;cursor:default;background:none}
+  .empty{color:var(--mut);font-size:12px;padding:20px 0}
   /* mobile: stack the jobs row so it never overflows a narrow screen */
   @media(max-width:600px){
     .wrap{padding:32px 16px}
-    .jhead{display:none}
-    .job{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;padding:12px 0}
+    .job{flex-wrap:wrap;gap:6px 10px}
     .job .q{flex:1 1 100%;order:-1;white-space:normal;overflow-wrap:anywhere}  /* query first line */
-    .job .st{flex:0 0 auto}
-    .job .pg{flex:1 1 auto;text-align:left}
-    .job .bar{flex:0 0 auto}
-    .job .dl{margin-left:auto}
+    .job .acts{opacity:1;margin-left:auto}
     .hint{min-width:0;overflow-wrap:anywhere}
   }
 </style>
@@ -133,6 +131,18 @@ go.onclick=async()=>{
 
 const esc=s=>String(s==null?"":s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
 
+// pause/resume/cancel a job, then refresh the list so the button state flips on confirmed status.
+async function jpost(id,act){try{await fetch(`/jobs/${id}/${act}`,{method:"POST"});}catch(e){}loadJobs();}
+function controlsFor(j){
+  const s=j.status, id=j.job_id; let h="";
+  if(s==="paused")h+=`<button class="icon" title="resume" onclick="event.stopPropagation();jpost('${id}','resume')">&#9655;</button>`;
+  else if(s==="running"||s==="queued")h+=`<button class="icon" title="pause" onclick="event.stopPropagation();jpost('${id}','pause')">&#8214;</button>`;
+  else if(s==="pausing")h+=`<button class="icon" title="pausing…" disabled>&#8214;</button>`;
+  if(["running","queued","pausing","paused"].includes(s))
+    h+=`<button class="icon" title="cancel" onclick="event.stopPropagation();if(confirm('Cancel this job? This cannot be undone.'))jpost('${id}','cancel')">&#10005;</button>`;
+  return h;
+}
+
 function dotFor(s){
   if(s==="running")return '<span class="dot on blink"></span>';
   if(s==="done"||s==="stopped"||s==="failed"||s==="interrupted")return '<span class="dot on"></span>';
@@ -140,18 +150,9 @@ function dotFor(s){
 }
 function progressText(j){
   const fc=j.file_count||0, sub=j.substantive_files||0, min=j.min_files||100;
-  const pr=j.progress||{};
-  if(j.status==="queued")return "queued";
-  if(j.status==="running"){
-    let t=`${sub}/${min} files`;
-    if(pr.total>0)t+=` · ${pr.done}/${pr.total} queries`;
-    return t;
-  }
-  if(j.status==="done")return `done · ${fc} files`;
-  if(j.status==="stopped")return `${j.stop_reason||"stopped"} · ${fc} files`;
-  if(j.status==="interrupted")return `interrupted · ${fc} files`;
-  if(j.status==="failed")return "failed";
-  return `${fc} files`;
+  if(j.status==="running")return `${sub}/${min}`;
+  if(j.status==="done"||j.status==="stopped")return `${fc}f`;
+  return j.status;   // queued / paused / pausing / cancelled / failed / interrupted
 }
 function miniBar(j){
   const sub=j.substantive_files||0, min=j.min_files||100;
@@ -168,17 +169,15 @@ async function loadJobs(){
     const jobs=d.jobs||[];
     if(!jobs.length){$("jobs").innerHTML='<div class="empty">No jobs yet. Submit a query above to start one.</div>';}
     else{
-      const head=`
-        <div class="job jhead">
-          <span>Status</span><span>Query</span><span class="pg">Files</span><span></span><span></span>
-        </div>`;
-      $("jobs").innerHTML=head+jobs.map(j=>`
-        <div class="job" aria-label="${esc(j.query)||"(no query)"}" onclick="location.href='/jobs/${j.job_id}/dashboard'">
-          <span class="st">${dotFor(j.status)}${esc(j.status)}</span>
+      $("jobs").innerHTML=jobs.map(j=>`
+        <div class="job" title="${esc(j.status)}" onclick="location.href='/jobs/${j.job_id}/dashboard'">
+          <span class="st">${dotFor(j.status)}</span>
           <span class="q" title="${esc(j.query)}">${esc(j.query)||"(no query)"}</span>
-          <span class="pg">${esc(progressText(j))}</span>
-          <span class="bar">${(j.status==="running")?miniBar(j):""}</span>
-          <a class="dl" href="/jobs/${j.job_id}/snapshot" onclick="event.stopPropagation()">zip</a>
+          <span class="pg">${(j.status==="running")?miniBar(j)+" ":""}${esc(progressText(j))}</span>
+          <span class="acts" onclick="event.stopPropagation()">
+            <a class="icon" href="/jobs/${j.job_id}/snapshot" title="download zip">&#8595;</a>
+            ${controlsFor(j)}
+          </span>
         </div>`).join("");
     }
     $("ref").textContent="updated "+new Date().toLocaleTimeString();

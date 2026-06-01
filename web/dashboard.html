@@ -109,17 +109,25 @@
     .foot{flex-direction:column;gap:8px;align-items:flex-start}
     header{flex-wrap:wrap;gap:4px}}
   .foot{display:flex;justify-content:space-between;color:var(--mut);font-size:11px;padding-top:12px}
+  .actions{display:flex;gap:8px;flex-wrap:wrap;padding:12px 0;border-bottom:1px solid var(--line)}
   .btn{border:1px solid var(--line);background:var(--bg);color:var(--fg);
     padding:6px 12px;cursor:pointer;font:inherit;text-decoration:none}
-  .btn[disabled]{opacity:.35;cursor:not-allowed}
+  .btn[disabled]{opacity:.35;cursor:not-allowed;pointer-events:none}
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
-    <h1>Dataroom</h1>
+    <h1><a href="/" title="Back to homepage">Dataroom</a></h1>
     <div class="meta">job <b id="jid">__JOB_ID__</b> · <span id="st"><span class="dot blink"></span>connecting</span></div>
   </header>
+
+  <div class="actions">
+    <a class="btn" href="/" title="Back to homepage">← all jobs</a>
+    <a class="btn" id="dl" href="#">download dataroom.zip</a>
+    <button class="btn" id="pauseBtn" style="display:none">pause</button>
+    <button class="btn" id="cancelBtn" style="display:none">cancel</button>
+  </div>
 
   <div class="banner" id="banner"></div>
   <div class="query">QUERY&nbsp;&nbsp;<b id="q">—</b></div>
@@ -149,6 +157,11 @@
       <div class="sub"><span id="ctxtok">0</span> / <span id="ctxwin">0</span> tokens</div>
       <div class="sub evt"><span id="cmp">0</span> compactions</div>
       <div class="bar" id="ctxbar"><i></i></div>
+    </div>
+    <div class="cell" style="order:1">
+      <div class="k">Total tokens</div>
+      <div class="big" id="tokTotal">0</div>
+      <div class="sub"><span id="tokIn">0</span> in · <span id="tokOut">0</span> out</div>
     </div>
     <div class="cell" style="order:2">
       <div class="k">Tool calls</div>
@@ -189,7 +202,6 @@
 
   <div class="foot">
     <div>auto-refresh 3s · <span id="ts">—</span></div>
-    <a class="btn" id="dl" href="#">download dataroom.zip</a>
   </div>
 </div>
 
@@ -197,6 +209,11 @@
 const JOB="__JOB_ID__";
 const $=id=>document.getElementById(id);
 let lastOk=0;
+
+// job controls: pause<->resume toggle + cancel. Re-tick after so the label flips on confirmed status.
+async function post(path){try{await fetch(path,{method:"POST"});}catch(e){}tick();}
+$("pauseBtn").onclick=()=>{const act=$("pauseBtn").dataset.act==="resume"?"resume":"pause";post(`/jobs/${JOB}/${act}`);};
+$("cancelBtn").onclick=()=>{if(confirm("Cancel this job? This cannot be undone."))post(`/jobs/${JOB}/cancel`);};
 
 function human(b){
   if(b<1024)return b+" B";
@@ -318,6 +335,12 @@ async function tick(){
     const bar=$("ctxbar");bar.querySelector("i").style.width=Math.min(100,c.percent||0)+"%";
     bar.classList.toggle("warn",(c.percent||0)>=80);
 
+    // total tokens (lifetime, summed across message_end usage)
+    const tk=d.tokens||{};
+    $("tokTotal").textContent=(tk.total||0).toLocaleString();
+    $("tokIn").textContent=(tk.input||0).toLocaleString();
+    $("tokOut").textContent=(tk.output||0).toLocaleString();
+
     // throughput (show "-" when metrics are down rather than a misleading 0)
     const tps=d.tps||{};
     $("tps").textContent=(tps.decode!=null?tps.decode:"-");
@@ -386,6 +409,16 @@ async function tick(){
     dl.removeAttribute("disabled");
     dl.href=`/jobs/${JOB}/snapshot`;
     dl.textContent=d.done?"download dataroom.zip":"download dataroom.zip (so far)";
+
+    // pause/resume/cancel for unfinished jobs
+    const stt=d.job_status;
+    const pb=$("pauseBtn"), cb=$("cancelBtn");
+    if(stt==="paused"){pb.style.display="";pb.textContent="resume";pb.dataset.act="resume";pb.disabled=false;}
+    else if(stt==="pausing"){pb.style.display="";pb.textContent="pausing…";pb.dataset.act="pause";pb.disabled=true;}
+    else if(stt==="running"||stt==="queued"){pb.style.display="";pb.textContent="pause";pb.dataset.act="pause";pb.disabled=false;}
+    else{pb.style.display="none";}
+    cb.style.display=["running","queued","pausing","paused"].includes(stt)?"":"none";
+
     $("ts").textContent=new Date().toLocaleTimeString();
   }catch(e){
     // staleness: dim vitals if we have not had a good poll in >2 intervals

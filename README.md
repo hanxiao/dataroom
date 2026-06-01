@@ -58,13 +58,18 @@ By default `llama-server` serves `Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf` (repo `unslot
 
 ### Switching the model
 
-With nothing set, the behavior is byte-for-byte today's default. To point the stack at a different GGUF, set these in `.env` (the defaults shown reproduce today exactly):
+**One knob.** Set `MODEL=<hf_repo>/<file.gguf>` in `.env` and re-run `scripts/setup.sh`. It derives the download repo and filename from `MODEL`, pulls the GGUF, and persists the filename so `docker-compose` serves the same file - download and serve stay in sync.
+
+```bash
+# .env  (default)
+MODEL=unsloth/Qwen3.6-35B-A3B-MTP-GGUF/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf
+```
+
+That is all you change to swap the LLM. The rest are **advanced overrides**, rarely needed (leave unset to use the defaults derived from `MODEL`):
 
 | Env var | Default | Role |
 | --- | --- | --- |
-| `MODEL_FILE` | `Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf` | GGUF filename: what `setup.sh` downloads AND what `llama-server --model` serves (now unified). |
-| `MODEL_REPO` | `unsloth/Qwen3.6-35B-A3B-MTP-GGUF` | Hugging Face repo `setup.sh` pulls `MODEL_FILE` from. |
-| `MODEL_ID` | `qwen3.6` | Agent-facing model id (Pi `models.json` / `defaultModel`). A free label; the served id over llama.cpp's OpenAI endpoint is arbitrary. |
+| `MODEL_ID` | `qwen3.6` | Agent-facing model id (Pi `models.json` / `defaultModel`). A free label; need not match the GGUF. |
 | `CHAT_TEMPLATE_FILE` | `/templates/chat_template.jinja` | Jinja chat template inside the llama-server container. |
 | `SPEC_ARGS` | `--spec-type draft-mtp --spec-draft-n-max 2` | MTP / speculative-draft flags appended to `llama-server`. |
 
