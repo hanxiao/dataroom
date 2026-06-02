@@ -81,6 +81,28 @@ Prereqs:
 - A Jina API key: https://jina.ai/api-dashboard/
 - Disk for a ~22GB model download plus the CUDA + pytorch base images and job data under `./data`. The model download alone can take several minutes on a slow link; it resumes from the Hugging Face cache if interrupted.
 
+## Run on Apple Silicon (Mac, no Docker)
+
+No NVIDIA GPU? Dataroom also runs natively on an Apple Silicon Mac, serving the model on **Metal**
+via Homebrew's `llama.cpp` — no Docker, no CUDA. The app, Pi agent, and embedder run in a local
+`uv` virtualenv; **no application-code changes are needed**.
+
+```bash
+brew install llama.cpp
+npm install -g @earendil-works/pi-coding-agent@0.78.0
+uv venv --python 3.11 .venv
+uv pip install --python .venv/bin/python torch -r server/requirements.txt jina-cli huggingface-hub
+# download the NON-MTP GGUF (the MTP variant won't load on the Homebrew build — see docs/MAC.md)
+HF_TOKEN=hf_... .venv/bin/python -c "from huggingface_hub import hf_hub_download; \
+hf_hub_download('unsloth/Qwen3.6-35B-A3B-GGUF','Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf',local_dir='models')"
+cp .env.example .env && sed -i '' 's/^JINA_API_KEY=.*/JINA_API_KEY=jina_your_real_key/' .env
+bash scripts/mac-run.sh
+```
+
+**Full guide, including why the non-MTP GGUF and the Metal flag changes: [`docs/MAC.md`](docs/MAC.md).**
+Recommended: 32 GB+ unified memory (the Q4 model wires ~22 GB). The web UI and API below work
+identically; just use `localhost`.
+
 ## Skill & API usage
 
 ### Skill
