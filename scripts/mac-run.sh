@@ -1,5 +1,5 @@
 #!/bin/bash
-# Run the Dataroom stack natively on an Apple Silicon Mac (Metal) — no Docker, no NVIDIA.
+# Run the Dataroom stack natively on an Apple Silicon Mac (Metal) - no Docker, no NVIDIA.
 #
 #   llama-server (Homebrew, Metal)   ->  :8080  (OpenAI-compatible)
 #   FastAPI app  (.venv, server.app) ->  :8000  (web UI + dashboard + API)
@@ -49,7 +49,7 @@ export PI_SKIP_VERSION_CHECK=1
 if curl -fsS "http://127.0.0.1:8080/health" >/dev/null 2>&1; then
   echo "llama-server already up on :8080"
 else
-  echo "=== starting llama-server (Metal) — loads ~22GB, first run ~30-60s ==="
+  echo "=== starting llama-server (Metal) - loads ~22GB, first run ~30-60s ==="
   # shellcheck disable=SC2086
   nohup llama-server \
     --model "$MODEL_PATH" \

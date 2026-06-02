@@ -1,6 +1,6 @@
 # Run on Apple Silicon (Mac, Metal)
 
-Dataroom runs natively on an Apple Silicon Mac with **no Docker and no NVIDIA GPU** — the
+Dataroom runs natively on an Apple Silicon Mac with **no Docker and no NVIDIA GPU** - the
 `llama-server` from Homebrew's `llama.cpp` serves the model on **Metal**, and the FastAPI app +
 Pi agent + embedder run in a local `uv` virtualenv. No application code changes are needed; the
 model is decoupled behind the OpenAI-compatible `LLAMA_URL`, so the only Mac-specific concerns are
@@ -8,7 +8,7 @@ which GGUF to use, the `llama-server` flags, and installing the deps the Docker 
 bundles.
 
 Tested on an **M3 Pro / 36 GB**, macOS, `llama.cpp` build 9430 (Homebrew). At least **32 GB** of
-unified memory is recommended — the Q4 model wires ~22 GB (+ ~400 MiB for the MTP draft context).
+unified memory is recommended - the Q4 model wires ~22 GB (+ ~400 MiB for the MTP draft context).
 
 ## What's different from the NVIDIA/Docker path
 
@@ -43,7 +43,7 @@ download.
 npm install -g @earendil-works/pi-coding-agent@0.78.0
 
 # torch is NOT in server/requirements.txt (upstream got it from a CUDA base image),
-# so install it explicitly — it pulls the Apple-Silicon (MPS/CPU) build.
+# so install it explicitly - it pulls the Apple-Silicon (MPS/CPU) build.
 uv venv --python 3.11 .venv
 uv pip install --python .venv/bin/python \
   torch -r server/requirements.txt jina-cli huggingface-hub
@@ -53,7 +53,7 @@ uv pip install --python .venv/bin/python \
 
 ```bash
 mkdir -p models/mtp
-# MTP GGUF (recommended — enables speculative decoding with llama.cpp >= 9430)
+# MTP GGUF (recommended - enables speculative decoding with llama.cpp >= 9430)
 HF_TOKEN=hf_your_token \
 .venv/bin/python -c "from huggingface_hub import hf_hub_download; \
 hf_hub_download('unsloth/Qwen3.6-35B-A3B-MTP-GGUF','Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf',local_dir='models/mtp')"
@@ -118,4 +118,3 @@ Set `MODEL_FILE` in `.env` to a different GGUF in `models/` and restart. The bun
 `templates/chat_template.jinja` is **Qwen3.6-specific**; for a non-Qwen GGUF set
 `CHAT_TEMPLATE_FILE` to that model's own Jinja template (a wrong template silently corrupts
 tool-calling).
-</content>

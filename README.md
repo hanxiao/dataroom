@@ -86,7 +86,7 @@ Prereqs:
 ## Run on Apple Silicon (Mac, no Docker)
 
 No NVIDIA GPU? Dataroom also runs natively on an Apple Silicon Mac, serving the model on **Metal**
-via Homebrew's `llama.cpp` — no Docker, no CUDA. MTP speculative decoding works on
+via Homebrew's `llama.cpp` - no Docker, no CUDA. MTP speculative decoding works on
 `llama.cpp` >= 9430, giving ~1.23x decode speedup. The app, Pi agent, and embedder run in a local
 `uv` virtualenv; **no application-code changes are needed**.
 
@@ -95,7 +95,7 @@ brew install llama.cpp
 npm install -g @earendil-works/pi-coding-agent@0.78.0
 uv venv --python 3.11 .venv
 uv pip install --python .venv/bin/python torch -r server/requirements.txt jina-cli huggingface-hub hf_transfer
-# download the MTP GGUF (non-MTP fallback available for older llama.cpp builds — see docs/MAC.md)
+# download the MTP GGUF (non-MTP fallback available for older llama.cpp builds - see docs/MAC.md)
 mkdir -p models/mtp
 HF_HUB_ENABLE_HF_TRANSFER=1 HF_TOKEN=hf_... .venv/bin/python -c "from huggingface_hub import hf_hub_download; \
 hf_hub_download('unsloth/Qwen3.6-35B-A3B-MTP-GGUF','Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf',local_dir='models/mtp')"
