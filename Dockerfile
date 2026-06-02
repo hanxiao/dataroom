@@ -36,20 +36,22 @@ RUN pip install -r server/requirements.txt
 # installable here — the CUDA index_service.py is its analogue. jina reads JINA_API_KEY from env.
 RUN pip install jina-cli
 
-# App code
-COPY server ./server
-COPY pi ./pi
-COPY templates ./templates
-COPY web ./web
-COPY assets ./assets
-
-# Pre-bake the v5-nano weights into the image (CPU download at build time; no GPU needed
-# during build) so the first job starts fast and the deploy is reproducible.
+# Pre-bake the v5-nano weights into the image (CPU download at build time; no GPU needed during
+# build) so the first job starts fast and the deploy is reproducible. Done BEFORE copying app
+# code so iterating on server/pi/web does not re-run this download (keeps local rebuilds fast).
 ENV HF_HOME=/app/.hf
 RUN python -c "import os; os.environ['CUDA_VISIBLE_DEVICES']=''; \
 from sentence_transformers import SentenceTransformer; \
 SentenceTransformer('jinaai/jina-embeddings-v5-text-nano', device='cpu', trust_remote_code=True)" \
     || echo "WARN: embed model prefetch skipped (will download on first run)"
+
+# App code last: a code change only invalidates these cheap COPY layers, so a warm-cache rebuild
+# (docker compose build daas on the host) is seconds, not a full reinstall.
+COPY server ./server
+COPY pi ./pi
+COPY templates ./templates
+COPY web ./web
+COPY assets ./assets
 
 ENV JOBS_DIR=/data/jobs
 # Embedder device: cpu (default, zero VRAM contention so the Q4 LLM keeps headroom) or cuda.
@@ -58,7 +60,7 @@ ENV EMBED_DEVICE=cpu
 ENV CONTEXT_WINDOW=131072
 
 # OCI metadata: links this image to the GitHub repo as a package, with source + license.
-LABEL org.opencontainers.image.source="https://github.com/hanxiao/dataroom-as-a-service" \
+LABEL org.opencontainers.image.source="https://github.com/hanxiao/dataroom" \
       org.opencontainers.image.description="Dataroom-as-a-Service app: autonomous Pi + local-model research harness (FastAPI orchestrator + jina v5-nano embedder)" \
       org.opencontainers.image.licenses="MIT"
 

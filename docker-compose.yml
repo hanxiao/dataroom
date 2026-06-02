@@ -80,6 +80,11 @@ services:
               capabilities: [gpu]
     volumes:
       - ./data:/data
+      # Skills + extensions are read-only methodology. Bind them back over the image copy as
+      # :ro so a job (which runs as root in this container) physically cannot create, overwrite,
+      # touch or delete anything under pi/ - the kernel returns EROFS. Defense in depth on top of
+      # the prompt anchor that already tells the agent the dataroom root is its own job dir.
+      - ./pi:/app/pi:ro
     depends_on:
       - llama-server
     restart: unless-stopped
