@@ -13,7 +13,7 @@ Give it a query. A local model in a [Pi](https://pi.dev) harness loops search-re
 
 ## Why
 
-[For long-horizon agent work you need a grounded, well-organized body of knowledge before the real work can start.](https://x.com/hxiao/status/2044765001370701981?s=20) That upfront research is mostly a search-read-write loop, and few things are usually wrong with how it gets done today.
+[For long-horizon task you need a grounded, well-organized knowledge dump before the real work can start.](https://x.com/hxiao/status/2044765001370701981?s=20) That upfront research is mostly a search-read-write loop, and few things are usually wrong with how it gets done today.
 
 - **Research is mechanical, so don't pay frontier tokens for it.** Gathering and organizing sources is tool-calling, not deep reasoning - a small local model in a disciplined harness (search, dedup, cite, verify) does it fine. And because it runs on your own GPU at near-zero marginal token cost, it can keep going for hours until the dataroom is actually comprehensive, instead of stopping when a metered budget runs out.
 - **The output is context for a machine, not a report for a human.** A 2025-style deep-research run ends in a long PDF nobody reads. Dataroom ends in a structured `.zip` - `topics/`, `sources/`, `data/`, a `SUMMARY.md`, every claim cited - built to be consumed by the next agent, not skimmed.
