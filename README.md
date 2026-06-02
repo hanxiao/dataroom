@@ -64,7 +64,7 @@ Pull the published app image from GHCR instead of building it locally (skips the
 DAAS_PULL=1 bash scripts/setup.sh
 ```
 
-Pulls `ghcr.io/hanxiao/dataroom-as-a-service:latest`. The package is public; if you've made it private, `docker login ghcr.io` first.
+Pulls `ghcr.io/hanxiao/dataroom-as-a-service:latest`.
 
 ### Option B: build from source
 
