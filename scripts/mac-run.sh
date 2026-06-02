@@ -9,9 +9,9 @@
 #
 # It honours the same env knobs as the docker-compose path (MODEL_FILE, CTX_SIZE, SPEC_ARGS,
 # CHAT_TEMPLATE_FILE), just with Mac-appropriate defaults:
-#   - SPEC_ARGS defaults to EMPTY. The upstream default (--spec-type draft-mtp) is unsupported
-#     by current Homebrew llama.cpp builds; export SPEC_ARGS=... to opt back in once a Metal
-#     build ships draft-mtp.
+#   - SPEC_ARGS defaults to '--spec-type draft-mtp --spec-draft-n-max 2' (measured ~1.23x
+#     decode speedup on M3 Pro with llama.cpp >= 9430). Set SPEC_ARGS= to disable if your
+#     build lacks draft-mtp support.
 #   - --flash-attn on   (the CUDA compose passes `1`; this build wants on|off|auto).
 #   - NGL defaults to 999 (unified memory: all layers on Metal; no L4 spill tradeoff).
 set -euo pipefail
@@ -30,13 +30,13 @@ command -v llama-server >/dev/null || { echo "ERROR: llama-server not found. Ins
 [ -x "$ROOT/.venv/bin/python" ] || { echo "ERROR: .venv missing. See docs/MAC.md (uv venv + uv pip install)." >&2; exit 1; }
 command -v pi >/dev/null || { echo "ERROR: pi not found. Install: npm install -g @earendil-works/pi-coding-agent@0.78.0" >&2; exit 1; }
 
-MODEL_FILE="${MODEL_FILE:-Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf}"
+MODEL_FILE="${MODEL_FILE:-mtp/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf}"
 CTX_SIZE="${CTX_SIZE:-65536}"
 NGL="${NGL:-999}"
-SPEC_ARGS="${SPEC_ARGS:-}"   # empty by default on Metal (no draft-mtp); opt in by exporting it
+SPEC_ARGS="${SPEC_ARGS:---spec-type draft-mtp --spec-draft-n-max 2}"   # ~1.23x on Metal; set SPEC_ARGS= to disable
 CHAT_TEMPLATE_FILE="${CHAT_TEMPLATE_FILE:-$ROOT/templates/chat_template.jinja}"
 MODEL_PATH="$ROOT/models/$MODEL_FILE"
-[ -f "$MODEL_PATH" ] || { echo "ERROR: model not found: $MODEL_PATH  (see docs/MAC.md to download the non-MTP GGUF)" >&2; exit 1; }
+[ -f "$MODEL_PATH" ] || { echo "ERROR: model not found: $MODEL_PATH  (see docs/MAC.md to download the GGUF)" >&2; exit 1; }
 
 mkdir -p logs "${JOBS_DIR:-./data/jobs}"
 
@@ -86,5 +86,5 @@ export PORT="${PORT:-8000}"
 echo "=== starting Dataroom app on :$PORT ==="
 echo "    web UI:     http://localhost:$PORT/"
 echo "    LLAMA_URL:  $LLAMA_URL    ctx=$CTX_SIZE    ngl=$NGL    embedder=$EMBED_DEVICE"
-[ -z "$SPEC_ARGS" ] && echo "    spec:       (none — draft-mtp disabled on Metal)" || echo "    spec:       $SPEC_ARGS"
+[ -z "$SPEC_ARGS" ] && echo "    spec:       (disabled)" || echo "    spec:       $SPEC_ARGS"
 exec "$ROOT/.venv/bin/python" -m server.app

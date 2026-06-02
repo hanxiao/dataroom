@@ -84,22 +84,24 @@ Prereqs:
 ## Run on Apple Silicon (Mac, no Docker)
 
 No NVIDIA GPU? Dataroom also runs natively on an Apple Silicon Mac, serving the model on **Metal**
-via Homebrew's `llama.cpp` — no Docker, no CUDA. The app, Pi agent, and embedder run in a local
+via Homebrew's `llama.cpp` — no Docker, no CUDA. MTP speculative decoding works on
+`llama.cpp` >= 9430, giving ~1.23x decode speedup. The app, Pi agent, and embedder run in a local
 `uv` virtualenv; **no application-code changes are needed**.
 
 ```bash
 brew install llama.cpp
 npm install -g @earendil-works/pi-coding-agent@0.78.0
 uv venv --python 3.11 .venv
-uv pip install --python .venv/bin/python torch -r server/requirements.txt jina-cli huggingface-hub
-# download the NON-MTP GGUF (the MTP variant won't load on the Homebrew build — see docs/MAC.md)
-HF_TOKEN=hf_... .venv/bin/python -c "from huggingface_hub import hf_hub_download; \
-hf_hub_download('unsloth/Qwen3.6-35B-A3B-GGUF','Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf',local_dir='models')"
+uv pip install --python .venv/bin/python torch -r server/requirements.txt jina-cli huggingface-hub hf_transfer
+# download the MTP GGUF (non-MTP fallback available for older llama.cpp builds — see docs/MAC.md)
+mkdir -p models/mtp
+HF_HUB_ENABLE_HF_TRANSFER=1 HF_TOKEN=hf_... .venv/bin/python -c "from huggingface_hub import hf_hub_download; \
+hf_hub_download('unsloth/Qwen3.6-35B-A3B-MTP-GGUF','Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf',local_dir='models/mtp')"
 cp .env.example .env && sed -i '' 's/^JINA_API_KEY=.*/JINA_API_KEY=jina_your_real_key/' .env
 bash scripts/mac-run.sh
 ```
 
-**Full guide, including why the non-MTP GGUF and the Metal flag changes: [`docs/MAC.md`](docs/MAC.md).**
+**Full guide, including the MTP/non-MTP GGUF choice and Metal flag changes: [`docs/MAC.md`](docs/MAC.md).**
 Recommended: 32 GB+ unified memory (the Q4 model wires ~22 GB). The web UI and API below work
 identically; just use `localhost`.
 
