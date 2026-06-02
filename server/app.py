@@ -251,15 +251,23 @@ def health():
     return {"ok": True}
 
 
+MAX_BUDGET_SECONDS = 3600   # 60-minute ceiling on a single job's time-box (one L4 slot, fair use)
+MIN_QUERY_LEN = 10          # reject empty / trivially short queries
+
+
 @app.post("/jobs")
 def create(req: JobReq):
-    if not req.query.strip():
-        raise HTTPException(400, "query required")
+    query = (req.query or "").strip()
+    if len(query) < MIN_QUERY_LEN:
+        raise HTTPException(400, "query too short: give a real research question (a few words at least)")
     job_id = uuid.uuid4().hex[:12]
     mf = int(req.min_files) if req.min_files and req.min_files > 0 else None
+    # 60-min ceiling: clamp an over-budget request down rather than rejecting it.
+    max_seconds = (min(int(req.max_seconds), MAX_BUDGET_SECONDS)
+                   if req.max_seconds and req.max_seconds > 0 else None)
     with _cond:
-        _jobs[job_id] = {"status": "queued", "query": req.query, "min_files": mf,
-                         "max_turns": req.max_turns, "max_seconds": req.max_seconds,
+        _jobs[job_id] = {"status": "queued", "query": query, "min_files": mf,
+                         "max_turns": req.max_turns, "max_seconds": max_seconds,
                          "submitted": time.time()}
         _queue.append(job_id)
         _cond.notify_all()           # wake the worker to pick it up (runs when the slot is free)

@@ -16,8 +16,8 @@ unzip it locally. Treat it like handing a research task to an intern for a fixed
 
 You give the agent a **time box**: `max_seconds`. It works up to that long, then stops and hands
 over whatever it has assembled. It may stop earlier if it judges the topic exhausted. So a
-30-minute budget = "spend up to 30 minutes on this." Bigger budget = more thorough (and more
-cost). There is no separate file target to set.
+30-minute budget = "spend up to 30 minutes on this." Bigger budget = more thorough, capped at
+**60 minutes** (a larger `max_seconds` is clamped to 3600). There is no separate file target to set.
 
 ## One-shot: submit, wait, download, unzip
 
