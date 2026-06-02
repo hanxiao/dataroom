@@ -110,6 +110,25 @@ def _load_meta(job_id: str) -> dict:
     return meta
 
 
+def _elapsed_seconds(meta: dict) -> int:
+    """Per-run wall-clock elapsed, defensive against stale/inconsistent timestamps.
+
+    `started` is reset on every (re)start and `finished` is cleared on resume, so the budget
+    is per-run (the orchestrator gets a fresh --max-seconds each run). A live job uses the wall
+    clock; a terminal job uses `finished` only when it is sane (>= started). Never returns a
+    negative value: a stale finished < started (e.g. a resume that left the prior finished in
+    place) would otherwise read as 'minus minutes left'."""
+    started = meta.get("started")
+    if not started:
+        return 0
+    if meta.get("status") in ("running", "queued", "pausing"):
+        return max(0, int(time.time() - started))
+    finished = meta.get("finished")
+    if finished and finished >= started:
+        return max(0, int(finished - started))
+    return 0   # terminal but timestamps missing/inconsistent -> avoid showing garbage
+
+
 class JobReq(BaseModel):
     query: str
     max_turns: int | None = None
@@ -293,7 +312,10 @@ def resume(job_id: str):
     with _cond:
         if job_id not in _jobs:
             _jobs[job_id] = _load_meta(job_id)      # restore query + budgets after a restart
-        _jobs[job_id].update({"status": "queued", "stop_reason": None})
+        # Clear the prior run's clock: _run_one sets a fresh `started`, and leaving the old
+        # `finished` in place makes the resumed run read a finished < started (negative elapsed).
+        _jobs[job_id].update({"status": "queued", "stop_reason": None,
+                              "started": None, "finished": None})
         if job_id not in _queue:
             _queue.append(job_id)
         _cond.notify_all()
@@ -438,9 +460,9 @@ def stats_ep(job_id: str):
     if meta.get("stop_reason") is not None:
         s["stop_reason"] = meta["stop_reason"]
     # Time-box progress: elapsed vs the job's max_seconds budget (the homepage/skill set this).
-    started, finished, max_seconds = meta.get("started"), meta.get("finished"), meta.get("max_seconds")
-    elapsed = int((finished or time.time()) - started) if started else 0
-    s["budget"] = {"max_seconds": max_seconds, "elapsed_seconds": max(0, elapsed),
+    max_seconds = meta.get("max_seconds")
+    elapsed = _elapsed_seconds(meta)
+    s["budget"] = {"max_seconds": max_seconds, "elapsed_seconds": elapsed,
                    "percent": round(min(100, 100 * elapsed / max_seconds), 1) if max_seconds else None}
     query = meta.get("query", "")
     qf = job_dir / "query.txt"

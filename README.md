@@ -50,8 +50,8 @@ An NVIDIA Docker host runs two containers (llama-server + the app). `scripts/set
 Clone and set the key once:
 
 ```bash
-git clone https://github.com/hanxiao/dataroom-as-a-service.git
-cd dataroom-as-a-service
+git clone https://github.com/hanxiao/dataroom.git
+cd dataroom
 cp .env.example .env
 sed -i 's/^JINA_API_KEY=.*/JINA_API_KEY=jina_your_real_key/' .env
 ```
@@ -64,7 +64,7 @@ Pull the published app image from GHCR instead of building it locally (skips the
 DAAS_PULL=1 bash scripts/setup.sh
 ```
 
-Pulls `ghcr.io/hanxiao/dataroom-as-a-service:latest`.
+Pulls `ghcr.io/hanxiao/dataroom:latest`.
 
 ### Option B: build from source
 
