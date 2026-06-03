@@ -99,6 +99,14 @@ bash scripts/mac-run.sh
 
 GGUF and Metal-flag details (MTP needs `llama.cpp` >= 9430): [`docs/MAC.md`](docs/MAC.md).
 
+### Option D: Windows (WSL2 + Docker Desktop)
+
+The same Docker stack as A/B, run from a WSL2 shell with Docker Desktop (GPU via WSL integration, no NVIDIA toolkit). It validates Docker + GPU, downloads the model, and starts the stack:
+
+```bash
+bash scripts/setup-win.sh          # or DAAS_PULL=1 bash scripts/setup-win.sh to pull the prebuilt image
+```
+
 ## Skill & API usage
 
 ### Skill
