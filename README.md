@@ -56,7 +56,10 @@ cp .env.example .env
 sed -i 's/^JINA_API_KEY=.*/JINA_API_KEY=jina_your_real_key/' .env
 ```
 
-### Option A: prebuilt image (fastest)
+Then pick one (each brings the stack up and prints the API URL when done):
+
+<details open>
+<summary><b>Option A: prebuilt image (fastest)</b></summary>
 
 Pull the published app image from GHCR instead of building it locally (skips the ~14GB build). `setup.sh` still installs Docker + the toolkit and downloads the model, then pulls + starts the stack:
 
@@ -66,7 +69,10 @@ DAAS_PULL=1 bash scripts/setup.sh
 
 Pulls `ghcr.io/hanxiao/dataroom:latest`.
 
-### Option B: build from source
+</details>
+
+<details>
+<summary><b>Option B: build from source</b></summary>
 
 Build the app image locally (no pull). Same one-shot, just slower the first time:
 
@@ -74,14 +80,10 @@ Build the app image locally (no pull). Same one-shot, just slower the first time
 bash scripts/setup.sh
 ```
 
-Either way, when it finishes it prints the API URL.
+</details>
 
-Prereqs:
-- An NVIDIA GPU with the driver installed (`nvidia-smi` must work) and the `nvidia-container-toolkit`. `setup.sh` installs the toolkit on Debian/Ubuntu hosts; on RHEL-family hosts install it yourself first. The llama-server needs the GPU; the app's v5-nano embedder runs on CPU by default (`EMBED_DEVICE=cpu`) to leave VRAM for the Q4 model (set `EMBED_DEVICE=cuda` to move it onto the GPU).
-- A Jina API key: https://jina.ai/api-dashboard/
-- Disk for a ~22GB model download plus the CUDA + pytorch base images and job data under `./data`. The model download alone can take several minutes on a slow link; it resumes from the Hugging Face cache if interrupted.
-
-### Option C: Apple Silicon (Mac, Metal)
+<details>
+<summary><b>Option C: Apple Silicon (Mac, Metal)</b></summary>
 
 No Docker, no NVIDIA. The model runs on Metal via Homebrew `llama.cpp`; the app, Pi agent, and embedder run in a local `uv` venv. Needs 32 GB+ unified memory (the Q4 model wires ~22 GB).
 
@@ -99,13 +101,23 @@ bash scripts/mac-run.sh
 
 GGUF and Metal-flag details (MTP needs `llama.cpp` >= 9430): [`docs/MAC.md`](docs/MAC.md).
 
-### Option D: Windows (WSL2 + Docker Desktop)
+</details>
+
+<details>
+<summary><b>Option D: Windows (WSL2 + Docker Desktop)</b></summary>
 
 The same Docker stack as A/B, run from a WSL2 shell with Docker Desktop (GPU via WSL integration, no NVIDIA toolkit). It validates Docker + GPU, downloads the model, and starts the stack:
 
 ```bash
 bash scripts/setup-win.sh          # or DAAS_PULL=1 bash scripts/setup-win.sh to pull the prebuilt image
 ```
+
+</details>
+
+Prereqs:
+- An NVIDIA GPU with the driver installed (`nvidia-smi` must work) and the `nvidia-container-toolkit` (Options A/B/D). `setup.sh` installs the toolkit on Debian/Ubuntu hosts; on RHEL-family hosts install it yourself first. The llama-server needs the GPU; the app's v5-nano embedder runs on CPU by default (`EMBED_DEVICE=cpu`) to leave VRAM for the Q4 model (set `EMBED_DEVICE=cuda` to move it onto the GPU).
+- A Jina API key: https://jina.ai/api-dashboard/
+- Disk for a ~22GB model download plus the CUDA + pytorch base images and job data under `./data`. The model download alone can take several minutes on a slow link; it resumes from the Hugging Face cache if interrupted.
 
 ## Skill & API usage
 
