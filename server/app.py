@@ -34,6 +34,10 @@ _lock = threading.Lock()
 _queue: list[str] = []
 _cond = threading.Condition(_lock)
 _current: dict = {"job_id": None, "proc": None}
+# Auto-backfill: when no freshly submitted/resumed job is queued, keep the single GPU slot busy by
+# resuming the least-recently-active paused job. Such a backfill run is preemptible - a new submission
+# (or an explicit resume) pauses it and takes the slot. Set AUTO_BACKFILL=0 to disable.
+AUTO_BACKFILL = os.environ.get("AUTO_BACKFILL", "1") != "0"
 
 
 def _save_meta(job_id: str):
@@ -190,18 +194,98 @@ def _run_one(job_id: str):
             _jobs[job_id]["status"], _jobs[job_id]["stop_reason"] = status, stop_reason
         _jobs[job_id]["rc"] = rc
         _jobs[job_id]["finished"] = time.time()
+        _jobs[job_id]["auto"] = False    # the backfill marker only applies to a live backfill run
     _save_meta(job_id)
 
 
-def _worker():
-    """Serial job runner: pick the oldest queued job, run it, repeat. Paused jobs are not
-    'queued' so they are naturally skipped; resume re-enqueues them."""
-    while True:
+def _next_foreground_locked():
+    """Oldest tier-1 'queued' job (freshly submitted or explicitly resumed), in FIFO order, or
+    None. Caller holds _cond."""
+    for j in _queue:
+        if _jobs.get(j, {}).get("status") == "queued":
+            return j
+    return None
+
+
+def _paused_on_disk() -> list:
+    """Paused job_ids, least-recently-active first - the backfill pool. Scans the jobs dir (cheap:
+    small meta/control reads) and reuses _load_meta, so a restart-interrupted job that reads as
+    'paused' is included too. Oldest `finished` first so backfill round-robins the backlog: a
+    preempted job gets a fresh `finished` and goes to the back."""
+    out = []
+    if JOBS.exists():
+        for p in sorted(JOBS.iterdir()):
+            if not p.is_dir():
+                continue
+            m = _load_meta(p.name)
+            if m.get("status") == "paused":
+                out.append((p.name, m.get("finished") or 0))
+    out.sort(key=lambda t: t[1])
+    return [jid for jid, _ in out]
+
+
+def _select_next():
+    """Pick the next job to run: (job_id, is_backfill). Tier 1 (foreground 'queued') always wins and
+    is removed from the wait queue. Tier 2 (backfill) only when AUTO_BACKFILL and there is no
+    foreground work: the oldest-idle paused job, committed to 'queued'+auto so _run_one resumes it
+    from its on-disk dataroom. Returns (None, False) when there is nothing to do (or a foreground job
+    appeared mid-scan - the worker loops and re-picks it)."""
+    with _cond:
+        fg = _next_foreground_locked()
+        if fg is not None:
+            _queue.remove(fg)
+            return fg, False
+    if not AUTO_BACKFILL:
+        return None, False
+    for cand in _paused_on_disk():
         with _cond:
-            while not any(_jobs.get(j, {}).get("status") == "queued" for j in _queue):
-                _cond.wait()
-            job_id = next(j for j in _queue if _jobs.get(j, {}).get("status") == "queued")
-            _queue.remove(job_id)
+            if _next_foreground_locked() is not None:
+                return None, False                         # foreground has priority; re-pick it
+            if _jobs.get(cand, {}).get("status") in ("queued", "running", "pausing"):
+                continue                                   # already taken (e.g. an explicit resume)
+            m = _load_meta(cand)
+            if m.get("status") != "paused":
+                continue
+            m.update({"status": "queued", "auto": True, "stop_reason": None,
+                      "started": None, "finished": None})
+            _jobs[cand] = m
+            _save_meta(cand)
+            return cand, True
+    return None, False
+
+
+def _preempt_backfill_locked():
+    """If a backfill (auto) job is running, flag it to pause so the slot frees for freshly queued
+    foreground work; it returns to the paused pool and can backfill again later. Caller holds _cond;
+    returns the proc to SIGTERM outside the lock (a long agent cycle would else delay the yield)."""
+    jid = _current["job_id"]
+    if jid and _jobs.get(jid, {}).get("auto") and _jobs.get(jid, {}).get("status") == "running":
+        try:
+            (JOBS / jid / "control").write_text("pause")
+        except Exception:
+            return None
+        _jobs[jid]["status"] = "pausing"
+        _save_meta(jid)
+        return _current["proc"]
+    return None
+
+
+def _worker():
+    """Serial job runner for the single GPU slot. Each cycle: run the next foreground job, or - if
+    none and AUTO_BACKFILL - resume the oldest-idle paused job to keep the GPU busy (preemptible).
+    Sleeps only when there is no foreground work and nothing to backfill."""
+    while True:
+        job_id, backfill = _select_next()
+        if job_id is None:
+            with _cond:
+                # Nothing selected. A new paused job can only appear while a job is running (and the
+                # worker is then in _run_one, not here), so every producer of work - create/resume/
+                # recover - notifies; re-check foreground under the lock to avoid a lost wakeup, sleep.
+                if _next_foreground_locked() is None:
+                    _cond.wait()
+            continue
+        if backfill:
+            print(f"[scheduler] backfill resume {job_id}", file=sys.stderr, flush=True)
         try:
             _run_one(job_id)
         except Exception as e:
@@ -234,6 +318,15 @@ def _recover_queue():
             except Exception:
                 raw = {}
         if raw.get("status") in ("queued", "running") and not (p / "dataroom.zip").exists():
+            if raw.get("auto"):
+                # A backfill job interrupted by the restart: return it to the paused pool rather than
+                # let it jump ahead of real foreground work. It re-backfills when the GPU next idles.
+                raw["status"], raw["auto"] = "paused", False
+                try:
+                    (p / "meta.json").write_text(json.dumps(raw))
+                except Exception:
+                    pass
+                continue
             m = _load_meta(p.name)          # full meta: query + budgets
             m["status"] = "queued"
             with _cond:
@@ -270,9 +363,15 @@ def create(req: JobReq):
                          "max_turns": req.max_turns, "max_seconds": max_seconds,
                          "submitted": time.time()}
         _queue.append(job_id)
-        _cond.notify_all()           # wake the worker to pick it up (runs when the slot is free)
+        proc = _preempt_backfill_locked()   # a fresh query takes the slot from any backfill job
+        _cond.notify_all()                  # wake the worker to pick it up (runs when the slot is free)
     (JOBS / job_id).mkdir(parents=True, exist_ok=True)
     _save_meta(job_id)
+    if proc is not None:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        except Exception:
+            pass
     return {"job_id": job_id, "status": "queued"}
 
 
@@ -333,12 +432,19 @@ def resume(job_id: str):
             _jobs[job_id] = _load_meta(job_id)      # restore query + budgets after a restart
         # Clear the prior run's clock: _run_one sets a fresh `started`, and leaving the old
         # `finished` in place makes the resumed run read a finished < started (negative elapsed).
-        _jobs[job_id].update({"status": "queued", "stop_reason": None,
+        # auto=False: an explicit resume is foreground work, not a preemptible backfill.
+        _jobs[job_id].update({"status": "queued", "stop_reason": None, "auto": False,
                               "started": None, "finished": None})
         if job_id not in _queue:
             _queue.append(job_id)
+        proc = _preempt_backfill_locked()   # an explicit resume preempts a running backfill job
         _cond.notify_all()
     _save_meta(job_id)
+    if proc is not None:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        except Exception:
+            pass
     return {"status": "queued"}
 
 
@@ -378,6 +484,7 @@ def list_jobs():
         rows.append({
             "job_id": jid,
             "status": meta.get("status", "unknown"),
+            "auto": bool(meta.get("auto")),
             "stop_reason": meta.get("stop_reason"),
             "query": (meta.get("query") or "")[:200],
             "started": meta.get("started"),

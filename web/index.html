@@ -193,6 +193,8 @@ function progressText(j){
   // count - substantive_files only counts topics/+reports/, so it reads 0 during sourcing even
   // though files exist. The minibar still tracks progress-to-floor separately.
   const fc=j.file_count||0;
+  // a running backfill job (auto-resumed from the paused pool to keep the GPU busy) yields to any new query
+  if(j.status==="running"&&j.auto)return `${fc} files · backfill`;
   if(["running","done","stopped"].includes(j.status))return `${fc} files`;
   if(j.status==="paused")return `paused · ${fc} files`;   // resumable; show banked work
   if(j.status==="pausing")return `pausing · ${fc} files`; // transient; until the cycle boundary
