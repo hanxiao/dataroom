@@ -1,0 +1,8 @@
+{
+  "name": "dataroom-pi-extensions",
+  "private": true,
+  "description": "Runtime dependencies for the Pi agent extensions loaded by Dataroom (see dataroom-index.ts).",
+  "dependencies": {
+    "typebox": "^1.2.1"
+  }
+}
