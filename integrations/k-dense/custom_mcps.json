@@ -1,0 +1,13 @@
+{
+  "dataroom": {
+    "command": "uv",
+    "args": [
+      "run",
+      "--with", "mcp",
+      "--with", "httpx",
+      "python",
+      "/ABSOLUTE/PATH/TO/dataroom/integrations/k-dense/dataroom_mcp.py",
+      "http://localhost:8000"
+    ]
+  }
+}
