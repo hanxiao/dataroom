@@ -42,6 +42,10 @@ download.
 ```bash
 npm install -g @earendil-works/pi-coding-agent@0.78.0
 
+# The Pi dataroom-index extension has a runtime dep (typebox); install it so the
+# agent can load the extension (otherwise jobs exit with "Cannot find module 'typebox'").
+(cd pi/extensions && npm install)
+
 # torch is NOT in server/requirements.txt (upstream got it from a CUDA base image),
 # so install it explicitly - it pulls the Apple-Silicon (MPS/CPU) build.
 uv venv --python 3.11 .venv
