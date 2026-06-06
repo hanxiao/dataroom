@@ -52,10 +52,13 @@ MODEL_PATH="$ROOT/models/$MODEL_FILE"
 
 # --- MLX backend knobs (only used when BACKEND=mlx) ---
 MLX_MODEL="${MLX_MODEL:-$ROOT/models/mlx/Qwen3.6-35B-A3B-UD-MLX-4bit}"
-# Stock mlx_lm.server runs fp16 KV (no --kv-bits flag yet; upstream ml-explore/mlx-lm#1043).
-# fp16 KV OOMs ~78-92K actual tokens on a 36GB Mac, so cap context below that. Quantized KV
-# (~92-113K ceiling) lands once the upstream server gains --kv-bits; then raise this cap.
-MLX_CTX_CAP="${MLX_CTX_CAP:-75000}"
+# KV cache quantization. Stock mlx_lm.server ran fp16 KV (OOM ~78-92K actual tokens on a 36GB
+# Mac). The --kv-bits flag (ml-explore/mlx-lm#1353) pushes the ceiling to ~92-113K with 4-bit KV
+# (greedy-lossless, long-ctx recall verified). We auto-detect the flag below: when present we
+# default to 4-bit KV and the higher context cap; otherwise fp16 KV with the conservative cap.
+MLX_KV_BITS="${MLX_KV_BITS:-4}"
+MLX_KV_GROUP_SIZE="${MLX_KV_GROUP_SIZE:-64}"
+MLX_KV_ARGS=()
 
 if [ "$BACKEND" = "mlx" ]; then
   [ -d "$MLX_MODEL" ] || { echo "ERROR: MLX model not found: $MLX_MODEL  (convert with mlx_lm.convert; see docs/MAC.md)" >&2; exit 1; }
@@ -63,8 +66,17 @@ if [ "$BACKEND" = "mlx" ]; then
   # tries to fetch it from HuggingFace). llama.cpp ignores the label, but MLX needs it to match
   # the loaded path, so pin Pi's MODEL_ID to it. (llama.cpp keeps the friendly default.)
   export MODEL_ID="${MODEL_ID:-$MLX_MODEL}"
+  # Use quantized KV only if this mlx_lm.server build supports it; raise the cap accordingly.
+  if [ -n "$MLX_KV_BITS" ] && "$ROOT/.venv-mlx/bin/mlx_lm.server" --help 2>/dev/null | grep -q -- '--kv-bits'; then
+    MLX_KV_ARGS=(--kv-bits "$MLX_KV_BITS" --kv-group-size "$MLX_KV_GROUP_SIZE")
+    MLX_CTX_CAP="${MLX_CTX_CAP:-85000}"
+    echo "NOTE: BACKEND=mlx using ${MLX_KV_BITS}-bit KV (group $MLX_KV_GROUP_SIZE); ctx cap $MLX_CTX_CAP"
+  else
+    MLX_CTX_CAP="${MLX_CTX_CAP:-75000}"
+    [ -n "$MLX_KV_BITS" ] && echo "NOTE: this mlx_lm.server lacks --kv-bits (need mlx-lm#1353); fp16 KV, ctx cap $MLX_CTX_CAP"
+  fi
   if [ "$CTX_SIZE" -gt "$MLX_CTX_CAP" ]; then
-    echo "NOTE: BACKEND=mlx caps CTX_SIZE $CTX_SIZE -> $MLX_CTX_CAP (fp16-KV OOM headroom on 36GB)"
+    echo "NOTE: BACKEND=mlx caps CTX_SIZE $CTX_SIZE -> $MLX_CTX_CAP"
     CTX_SIZE="$MLX_CTX_CAP"
   fi
 else
@@ -98,6 +110,7 @@ elif [ "$BACKEND" = "mlx" ]; then
     --model "$MLX_MODEL" \
     --host 127.0.0.1 --port 8080 \
     --max-tokens 8192 \
+    ${MLX_KV_ARGS[@]+"${MLX_KV_ARGS[@]}"} \
     > "$ROOT/logs/mlx.log" 2>&1 &
   echo "mlx_lm.server PID: $!  (logs: logs/mlx.log)"
   wait_for_server "mlx_lm.server" "$ROOT/logs/mlx.log"
@@ -136,7 +149,11 @@ echo "    web UI:     http://localhost:$PORT/"
 echo "    backend:    $BACKEND"
 if [ "$BACKEND" = "mlx" ]; then
   echo "    LLAMA_URL:  $LLAMA_URL    ctx=$CTX_SIZE (cap $MLX_CTX_CAP)    model=$MLX_MODEL    embedder=$EMBED_DEVICE"
-  echo "    note:       fp16 KV (no --kv-bits yet, mlx-lm#1043); dashboard tok/s + KV gauge are llama.cpp-only"
+  if [ ${#MLX_KV_ARGS[@]} -gt 0 ]; then
+    echo "    note:       ${MLX_KV_BITS}-bit KV (group $MLX_KV_GROUP_SIZE, mlx-lm#1353); dashboard tok/s + KV gauge are llama.cpp-only"
+  else
+    echo "    note:       fp16 KV (this mlx_lm.server lacks --kv-bits, see mlx-lm#1353); dashboard tok/s + KV gauge are llama.cpp-only"
+  fi
 else
   echo "    LLAMA_URL:  $LLAMA_URL    ctx=$CTX_SIZE    ngl=$NGL    embedder=$EMBED_DEVICE"
   [ -z "$SPEC_ARGS" ] && echo "    spec:       (disabled)" || echo "    spec:       $SPEC_ARGS"
