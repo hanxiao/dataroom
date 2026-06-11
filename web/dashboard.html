@@ -310,7 +310,9 @@ const STOP={
   ceiling_cost:["stop","STOPPED — Jina-call budget ceiling reached (partial, downloadable)"],
   turn_timeout:["stop","STOPPED — a turn timed out"],
   error_index_boot:["err","ERROR — index sidecar failed to start"],
-  paused:["stop","PAUSED — resume from the homepage or the controls above"],
+  paused:["stop","PAUSED — preempted to free the GPU; auto-resumes when idle, or resume now"],
+  held:["stop","HELD — you paused this; it stays paused until you resume it"],
+  budget_exhausted:["stop","STOPPED — cumulative GPU budget exhausted; resume to grant a fresh budget"],
 };
 function setStatus(s,done){
   const el=$("st");
@@ -318,6 +320,7 @@ function setStatus(s,done){
   else if(s==="running"){el.innerHTML='<span class="dot on blink"></span>running';}
   else if(s==="stopped"){el.innerHTML='<span class="dot on"></span>stopped';}
   else if(s==="failed"||s==="interrupted"){el.innerHTML='<span class="dot on"></span>'+s;}
+  else if(s==="held"){el.innerHTML='<span class="dot"></span>held';}
   else{el.innerHTML='<span class="dot"></span>'+(s||"queued");}
 }
 
@@ -440,7 +443,8 @@ async function tick(){
     // pause/resume for unfinished jobs (icon-only, title tooltips)
     const stt=d.job_status;
     const pb=$("pauseBtn");
-    if(stt==="paused"){pb.style.display="";pb.innerHTML=ic("resume");pb.title="resume";pb.dataset.act="resume";pb.disabled=false;}
+    const budgetResumable=(stt==="stopped"&&d.stop_reason==="budget_exhausted");
+    if(stt==="paused"||stt==="held"||budgetResumable){pb.style.display="";pb.innerHTML=ic("resume");pb.title="resume";pb.dataset.act="resume";pb.disabled=false;}
     else if(stt==="pausing"){pb.style.display="";pb.innerHTML=ic("pause");pb.title="pausing…";pb.dataset.act="pause";pb.disabled=true;}
     else if(stt==="running"||stt==="queued"){pb.style.display="";pb.innerHTML=ic("pause");pb.title="pause";pb.dataset.act="pause";pb.disabled=false;}
     else{pb.style.display="none";}

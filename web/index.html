@@ -177,7 +177,10 @@ function ic(n){
 async function jpost(id,act){try{await fetch(`/jobs/${id}/${act}`,{method:"POST"});}catch(e){}loadJobs();}
 function controlsFor(j){
   const s=j.status, id=j.job_id; let h="";
-  if(s==="paused")h+=`<button class="icon" title="resume" onclick="event.stopPropagation();jpost('${id}','resume')">${ic("resume")}</button>`;
+  // held (user-paused, sticky) and paused (preemptible idle) both resume; a budget-exhausted
+  // 'stopped' can be force-resumed (banked work, fresh budget).
+  const resumable = s==="paused"||s==="held"||(s==="stopped"&&j.stop_reason==="budget_exhausted");
+  if(resumable)h+=`<button class="icon" title="resume" onclick="event.stopPropagation();jpost('${id}','resume')">${ic("resume")}</button>`;
   else if(s==="running"||s==="queued")h+=`<button class="icon" title="pause" onclick="event.stopPropagation();jpost('${id}','pause')">${ic("pause")}</button>`;
   else if(s==="pausing")h+=`<button class="icon" title="pausing…" disabled>${ic("pause")}</button>`;
   return h;
@@ -195,8 +198,10 @@ function progressText(j){
   const fc=j.file_count||0;
   // a running backfill job (auto-resumed from the paused pool to keep the GPU busy) yields to any new query
   if(j.status==="running"&&j.auto)return `${fc} files · backfill`;
+  if(j.status==="stopped"&&j.stop_reason==="budget_exhausted")return `budget exhausted · ${fc} files`; // resumable
   if(["running","done","stopped"].includes(j.status))return `${fc} files`;
-  if(j.status==="paused")return `paused · ${fc} files`;   // resumable; show banked work
+  if(j.status==="held")return `held · ${fc} files`;       // user-paused, sticky
+  if(j.status==="paused")return j.preempted?`preempted · ${fc} files`:`paused · ${fc} files`;   // resumable; show banked work
   if(j.status==="pausing")return `pausing · ${fc} files`; // transient; until the cycle boundary
   return j.status;   // queued / failed
 }

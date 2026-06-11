@@ -313,7 +313,7 @@ def drive_rpc(job_dir: Path, agent_dir: Path, args, dataroom: Path,
                 ctl = cf.read_text(errors="ignore").strip()
                 if ctl == "cancel":
                     stop_reason = "cancelled"; break
-                if ctl == "pause":
+                if ctl in ("pause", "hold"):   # 'pause' = system preempt, 'hold' = user pause; both checkpoint here
                     stop_reason = "paused"; break
 
             # --- evaluate floor / budget (identical policy to the old per-turn loop) ---

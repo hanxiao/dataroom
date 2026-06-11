@@ -160,8 +160,15 @@ JOB=abc123def456
 # list all jobs (live + on-disk), newest first
 curl -s localhost:8000/jobs
 
+# list one page, newest first (large backlogs): ?limit=100&offset=0 -> {jobs,total,limit,offset}
+curl -s 'localhost:8000/jobs?limit=50&offset=0'
+
 # single job status
 curl -s localhost:8000/jobs/$JOB
+
+# pause (sticky: 'held' - never auto-resumed) / resume a job
+curl -s -X POST localhost:8000/jobs/$JOB/pause
+curl -s -X POST localhost:8000/jobs/$JOB/resume
 
 # per-job metrics feed (drives the dashboard)
 curl -s localhost:8000/jobs/$JOB/stats
@@ -183,6 +190,27 @@ open http://localhost:8000/jobs/$JOB/dashboard
 ```
 
 There is also a minimal submit page at `GET /` and a liveness probe at `GET /health` (`{"ok":true}`).
+
+### Scheduling (single GPU, one slot)
+
+The L4 serves one llama slot, so jobs run **serially**. The scheduler is:
+
+- **Foreground FIFO.** Fresh submits and explicit resumes are foreground work and run oldest-first.
+- **Preemption.** A new foreground job preempts whatever is running - including another foreground
+  job - and takes the slot immediately (`PREEMPT_FOREGROUND=1`, the default). The preempted job
+  returns to the pool and resumes ahead of bulk backfill. Set `PREEMPT_FOREGROUND=0` to make a new
+  job wait for the running one instead.
+- **Auto-backfill.** When no foreground work is queued, the oldest paused job is auto-resumed to
+  keep the GPU busy (`AUTO_BACKFILL=1`). A backfill run is preemptible by any foreground job.
+- **Pause is sticky.** A user `POST /pause` puts the job in `held` - it is *not* auto-resumed; only
+  an explicit `POST /resume` revives it. (System preemption uses a separate, preemptible `paused`
+  state.)
+- **Cumulative budget.** A job that never reaches its coverage floor would otherwise be backfilled
+  forever. Once its lifetime GPU time crosses `MAX_CUMULATIVE_SECONDS` it retires
+  (`stopped`, `stop_reason=budget_exhausted`) and stops being re-picked. An explicit resume grants
+  a fresh budget. Per-run caps (`MAX_SECONDS` etc.) still apply to each individual run.
+
+State survives an app restart: in-flight jobs re-queue in submit order, user-held jobs stay held.
 
 ## Architecture
 
