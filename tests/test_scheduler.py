@@ -96,6 +96,16 @@ def fake_run_one(job_id):
         app._jobs[job_id]["rc"] = 0
         app._jobs[job_id]["finished"] = now
         app._jobs[job_id]["auto"] = False
+        # mirror production: a resume requested during the pausing window re-queues at finalize
+        if app._jobs[job_id].pop("resume_pending", False) and app._jobs[job_id]["status"] in ("held", "paused"):
+            app._jobs[job_id].update({"status": "queued", "stop_reason": None, "auto": False,
+                                      "preempted": False, "started": None, "finished": None})
+            try:
+                (jd / "control").unlink()
+            except FileNotFoundError:
+                pass
+            if job_id not in app._queue:
+                app._queue.append(job_id)
     app._save_meta(job_id)
 
 
@@ -269,5 +279,24 @@ app.resume("pf_runaway")
 check("force-resume clears the cumulative budget", app._jobs["pf_runaway"].get("cum_seconds") == 0)
 wait_until(lambda: status("pf_runaway") == "done", msg="force-resumed runaway finished")
 check("force-resumed budget-exhausted job runs again", status("pf_runaway") == "done")
+
+# ---------------------------------------------------------------------------
+# Scenario G: resume requested WHILE a job is still 'pausing' (the cooperative stop is in
+# flight). The intent is recorded and honored at finalize: the job re-queues as foreground
+# instead of getting stuck in 'held'. A quick pause->resume is thus a no-op.
+# ---------------------------------------------------------------------------
+print("G: resume during the pausing window is honored (no stuck held)")
+OBSERVED.clear()
+DEFAULT_FINISH = 0.4
+gf = app.create(app.JobReq(query="a job to pause then immediately resume"))["job_id"]
+wait_until(lambda: status(gf) == "running", msg="job running before pause")
+with app._lock:
+    app._jobs[gf]["_finish_after"] = 2.0   # keep it in the pausing window long enough to resume
+app.pause(gf)
+check("job is pausing after user pause", status(gf) == "pausing")
+rg = app.resume(gf)                          # must NOT raise 409
+check("resume during pausing returns queued (not 409)", rg.get("status") == "queued")
+wait_until(lambda: status(gf) == "done", msg="resumed-in-pausing job finishes")
+check("resume-in-pausing job finished (never stuck held)", status(gf) == "done")
 
 print(f"\nALL {len(PASS)} CHECKS PASSED")

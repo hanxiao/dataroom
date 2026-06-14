@@ -256,6 +256,18 @@ def _run_one(job_id: str):
         _jobs[job_id]["rc"] = rc
         _jobs[job_id]["finished"] = now
         _jobs[job_id]["auto"] = False    # the backfill marker only applies to a live backfill run
+        # If the user hit resume WHILE this job was still 'pausing' (the cooperative stop was already
+        # in flight, so we could not keep it running), honor that intent now: re-queue as foreground
+        # instead of settling into held/paused. Without this a quick pause->resume gets stuck.
+        if _jobs[job_id].pop("resume_pending", False) and _jobs[job_id]["status"] in ("held", "paused"):
+            _jobs[job_id].update({"status": "queued", "stop_reason": None, "auto": False,
+                                  "preempted": False, "started": None, "finished": None})
+            try:
+                (job_dir / "control").unlink()
+            except FileNotFoundError:
+                pass
+            if job_id not in _queue:
+                _queue.append(job_id)
     _save_meta(job_id)
 
 
@@ -551,6 +563,18 @@ def resume(job_id: str):
     is user intent: it preempts whatever is running (per PREEMPT_FOREGROUND) and bypasses the
     cumulative-budget cap (a budget-exhausted job can be force-resumed)."""
     st = _cur_status(job_id)
+    # Resume requested while a cooperative stop is still in flight ('pausing'): we can't keep the
+    # subprocess (already SIGTERM'd), so record the intent and let _run_one's finalize re-queue it
+    # as foreground. A quick pause->resume thus becomes a no-op rather than getting stuck in held.
+    if st == "pausing":
+        with _cond:
+            cur = _jobs.get(job_id, {})
+            if _current["job_id"] == job_id and cur.get("status") == "pausing":
+                cur["resume_pending"] = True
+                _save_meta(job_id)
+                _cond.notify_all()
+                return {"status": "queued"}
+        st = _cur_status(job_id)   # it settled to held/paused meanwhile; fall through to normal resume
     if st not in ("paused", "held", "stopped"):
         raise HTTPException(409, f"cannot resume a job in state {st}")
     # Only a budget-exhausted 'stopped' is resumable (it banked real work); a clean done/failed is not.
