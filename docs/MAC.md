@@ -118,3 +118,66 @@ Set `MODEL_FILE` in `.env` to a different GGUF in `models/` and restart. The bun
 `templates/chat_template.jinja` is **Qwen3.6-specific**; for a non-Qwen GGUF set
 `CHAT_TEMPLATE_FILE` to that model's own Jinja template (a wrong template silently corrupts
 tool-calling).
+
+## Alternative backend: MLX (faster prefill)
+
+`scripts/mac-run.sh` can serve `:8080` with Apple's **mlx-lm** instead of llama.cpp, behind a
+`BACKEND` knob. It's opt-in; the default stays llama.cpp.
+
+```bash
+BACKEND=mlx bash scripts/mac-run.sh      # or set BACKEND=mlx in .env
+```
+
+On an M3 Pro / 36 GB serving the 4-bit MLX model, prefill is ~530 tok/s vs llama.cpp's ~90 (**~6x**),
+with decode at or above the MTP path (~39 vs ~37 tok/s). Prefill is what the compaction loop is bound
+by, so this is the win that matters for long jobs. Greedy output matches llama.cpp (9/10 exact, the
+lone diff a synonym).
+
+| Backend | Engine | Model | Prefill | Context ceiling |
+| --- | --- | --- | --- | --- |
+| `llamacpp` *(default)* | llama.cpp (Metal, GGUF) | `models/mtp/...Q4_K_XL.gguf` | ~90 tok/s | >128K (stable) |
+| `mlx` | mlx-lm (`mlx_lm.server`) | `models/mlx/Qwen3.6-35B-A3B-UD-MLX-4bit` | ~530 tok/s | ~75K (auto-capped) |
+
+Use `llamacpp` for jobs that need >75K context; use `mlx` for throughput on the compaction-heavy
+loop and jobs under that cap.
+
+### MLX setup (one-time)
+
+mlx-lm must live in its **own** venv - installing it into the app `.venv` bumps `transformers` and
+breaks the embedder.
+
+```bash
+uv venv .venv-mlx
+VIRTUAL_ENV=$PWD/.venv-mlx uv pip install mlx-lm
+# Download or convert a 4-bit MLX build into models/mlx/Qwen3.6-35B-A3B-UD-MLX-4bit
+# (e.g. mlx_lm.convert, or pull a pre-quantized 4-bit MLX repo).
+```
+
+`mac-run.sh` checks both the venv and the model exist before starting and errors with the fix if not.
+
+### MLX env knobs
+
+| Var | Default | Meaning |
+| --- | --- | --- |
+| `BACKEND` | `llamacpp` | `llamacpp` or `mlx`. |
+| `MLX_MODEL` | `models/mlx/Qwen3.6-35B-A3B-UD-MLX-4bit` | Path to the MLX model dir. |
+| `MLX_CTX_CAP` | `75000` | Max context for MLX; `CTX_SIZE` is auto-capped to this. |
+| `MODEL_ID` | (auto = `MLX_MODEL`) | Pinned so Pi's requests match the loaded model (see below). |
+
+### MLX caveats
+
+- **Context auto-cap.** Stock `mlx_lm.server` runs an **fp16 KV cache** (no `--kv-bits` flag -
+  upstream [ml-explore/mlx-lm#1043](https://github.com/ml-explore/mlx-lm/issues/1043)). fp16 KV
+  OOMs (`kIOGPUCommandBufferCallbackErrorOutOfMemory`) at ~78-92K actual tokens on 36 GB, so the
+  script caps context to `MLX_CTX_CAP` (75K). Quantized KV is greedy-lossless with 15/15 fact
+  recall at 83.5K locally; once the upstream server gains `--kv-bits`, switch it on and raise the
+  cap toward ~85K (kv4 ceiling ~92-113K).
+- **`MODEL_ID` is pinned to the model path.** `mlx_lm.server` resolves the request's `model` field
+  against the loaded model and otherwise tries to fetch it from HuggingFace (a request for the
+  friendly label `qwen3.6` -> 404). llama.cpp ignores the label; MLX needs the match, so the script
+  exports `MODEL_ID=$MLX_MODEL` for this backend.
+- **Dashboard tok/s + KV gauge are llama.cpp-only.** They read llama.cpp's `/metrics` and `/slots`,
+  which `mlx_lm.server` doesn't expose, so those live widgets stay blank under `mlx` (the job still
+  runs and packages normally).
+
+Stop the MLX model with `pkill -f mlx_lm.server`.
